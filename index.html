@@ -228,6 +228,7 @@ html,body{height:100%;overflow:hidden;font-family:var(--font);font-size:13px;col
 .toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%) translateY(60px);background:var(--gray800);color:#fff;padding:9px 18px;border-radius:8px;font-size:12px;font-weight:500;z-index:200;transition:transform .22s;white-space:nowrap;pointer-events:none}
 .toast.show{transform:translateX(-50%) translateY(0)}
 .toast.success{background:var(--green)}
+.toast.error{background:var(--red)}
 
 /* ========== MOBILE RESPONSIVE ========== */
 @media (max-width: 768px) {
@@ -2281,33 +2282,54 @@ async function loadSettingsFromDb(){
 
 async function saveSettingToDb(key, value){
   try {
-    // Try PATCH first (update existing)
-    const existing = await sbFetch('settings?key=eq.'+key+'&select=id');
-    if(existing && existing.length>0){
-      await sbFetch('settings?key=eq.'+key, 'PATCH', {value});
-    } else {
-      // Insert new
-      await sbFetch('settings', 'POST', {key, value});
+    // Upsert: POSTにresolution=merge-duplicatesを付けることで
+    // keyが存在すれば更新、なければ挿入する（settingsテーブルはkeyをunique想定）
+    const res = await fetch(SUPABASE_URL + '/rest/v1/settings', {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates,return=representation'
+      },
+      body: JSON.stringify({key, value})
+    });
+    if(!res.ok){
+      const errText = await res.text();
+      console.error('saveSetting error ['+key+']:', errText);
+      showToast('設定保存失敗: ' + errText.substring(0,80), 'error');
+      return false;
     }
-    console.log('Setting saved:', key, value);
-  } catch(e){ console.log('saveSetting error:',e); }
+    console.log('Setting saved:', key, '=', value);
+    return true;
+  } catch(e){
+    console.error('saveSetting exception:', e);
+    showToast('設定保存中にエラーが発生しました', 'error');
+    return false;
+  }
 }
 
 async function saveStoreSettings(){
   const np=document.getElementById('newAdminPass').value;
   if(np&&np.length!==4){showToast('パスコードは4桁で入力してください');return;}
+  // Save to DB
+  const s0=document.getElementById('storeName0').value;
+  const s1=document.getElementById('storeName1').value;
+  showToast('保存中...','');
+  const r0 = await saveSettingToDb('storeName0',s0);
+  const r1 = await saveSettingToDb('storeName1',s1);
+  let rp = true;
+  if(np) rp = await saveSettingToDb('adminPasscode',np);
+  if(r0===false || r1===false || rp===false){
+    // エラートーストはsaveSettingToDb内で表示済み
+    return;
+  }
+  // 全て成功したらメモリ上にも反映
   if(np) adminPasscode=np;
   document.getElementById('newAdminPass').value='';
   populateStoreSelects();
   const adminSel=document.getElementById('adminStoreSelect');
   if(adminSel) adminSel.value=currentStore;
-  // Save to DB and await
-  const s0=document.getElementById('storeName0').value;
-  const s1=document.getElementById('storeName1').value;
-  showToast('保存中...','');
-  await saveSettingToDb('storeName0',s0);
-  await saveSettingToDb('storeName1',s1);
-  if(np) await saveSettingToDb('adminPasscode',np);
   showToast('設定を保存しました ✓','success');
 }
 
@@ -2427,20 +2449,29 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 const VAPID_PUBLIC_KEY = 'BFA-LHehNrD52tD3Z9fxkjn_tw_MCIQ8jVZ69TZqr18PKOq5eLDCnsgg5zJzHXWHDRKjvqhgP5vOClSj4ci-tpI';
 
 async function sbFetch(path, method='GET', body=null) {
+  // Preferヘッダー: POST・PATCHともにreturn=representationを付ける
+  let prefer = '';
+  if(method==='POST') prefer = 'return=representation';
+  else if(method==='PATCH') prefer = 'return=representation';
+
   const opts = {
     method,
     headers: {
       'apikey': SUPABASE_KEY,
       'Authorization': 'Bearer ' + SUPABASE_KEY,
       'Content-Type': 'application/json',
-      'Prefer': method==='POST'?'return=representation':''
+      ...(prefer ? {'Prefer': prefer} : {})
     }
   };
   if(body) opts.body = JSON.stringify(body);
   const res = await fetch(SUPABASE_URL + '/rest/v1/' + path, opts);
-  if(!res.ok) { const err=await res.text(); console.error('SB Error:',err); return null; }
+  if(!res.ok) {
+    const err = await res.text();
+    console.error('SB Error ['+method+' '+path+']:', err);
+    throw new Error('SB ' + method + ' failed: ' + err);
+  }
   const txt = await res.text();
-  return txt ? JSON.parse(txt) : null;
+  return txt ? JSON.parse(txt) : [];
 }
 
 // ============ PUSH NOTIFICATION ============
