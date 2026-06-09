@@ -2588,7 +2588,8 @@ function urlBase64ToUint8Array(base64String) {
 const SEND_PUSH_URL = SUPABASE_URL + '/functions/v1/send-push';
 
 // staffDbId 宛にアプリ内通知（DB記録）＋ Web Push（Edge Function経由）を送る
-// title は省略可（既定: 'らくシフト'）
+// 注: デプロイ済み send-push 関数は { subscription, message } を受け取る契約。
+//     title/url 引数は将来用（現在の関数はタイトルを 'らくシフト' に固定）。
 async function sendPushToStaff(staffDbId, message, title, url) {
   // 1) アプリ内通知としてDBに記録（ログイン時に checkNotifications で表示される）
   try {
@@ -2599,8 +2600,23 @@ async function sendPushToStaff(staffDbId, message, title, url) {
     });
   } catch(e) { console.error('notifications insert error:', e); }
 
-  // 2) Edge Function 経由で実際の Web Push を送信
-  //    Edge Function 側で staff_id から push_subscription を引いて送信する想定。
+  // 2) 対象スタッフの購読情報(push_subscription)をDBから取得
+  let subscription = null;
+  try {
+    const rows = await sbFetch('staff?id=eq.' + staffDbId + '&select=push_subscription');
+    const raw = rows && rows[0] ? rows[0].push_subscription : null;
+    if(raw){
+      subscription = (typeof raw === 'string') ? JSON.parse(raw) : raw;
+    }
+  } catch(e){ console.error('subscription fetch/parse error:', e); }
+
+  // 未購読ならアプリ内通知のみ（Pushは送れない）
+  if(!subscription || !subscription.endpoint){
+    console.log('no push subscription for staff', staffDbId);
+    return false;
+  }
+
+  // 3) Edge Function 経由で実際の Web Push を送信（関数は { subscription, message } を受け取る）
   try {
     const res = await fetch(SEND_PUSH_URL, {
       method: 'POST',
@@ -2609,16 +2625,15 @@ async function sendPushToStaff(staffDbId, message, title, url) {
         'apikey': SUPABASE_KEY,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        staff_id: staffDbId,
-        title: title || 'らくシフト',
-        body: message,
-        url: url || (location.origin + location.pathname)
-      })
+      body: JSON.stringify({ subscription, message })
     });
     if(!res.ok){
       const t = await res.text().catch(()=> '');
       console.error('send-push error ['+res.status+']:', t);
+      // 410/404 は購読失効 → DBから購読情報をクリアしておく
+      if(res.status===410 || res.status===404){
+        try { await sbFetch('staff?id=eq.'+staffDbId, 'PATCH', {push_subscription: null}); } catch(_){}
+      }
       return false;
     }
     return true;
