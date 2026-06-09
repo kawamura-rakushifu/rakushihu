@@ -335,6 +335,8 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
 
       <!-- Staff login -->
       <div id="staffLoginForm" style="display:none">
+        <div class="login-label">店舗</div>
+        <select class="login-select" id="loginStaffStore" onchange="populateStaffSelect()"></select>
         <div class="login-label">スタッフを選択</div>
         <select class="login-select" id="loginStaffSelect"></select>
         <div class="login-label">パスコード（4桁）</div>
@@ -875,13 +877,25 @@ function populateStoreSelects(){
   const s1=getStoreName(1);
   const loginSel=document.getElementById('loginStore');
   const adminSel=document.getElementById('adminStoreSelect');
+  const staffStoreSel=document.getElementById('loginStaffStore');
   if(loginSel) loginSel.innerHTML=`<option value="0">${s0}</option><option value="1">${s1}</option>`;
   if(adminSel) adminSel.innerHTML=`<option value="0">🏪 ${s0}</option><option value="1">🏪 ${s1}</option>`;
+  if(staffStoreSel){
+    const cur=staffStoreSel.value||'0';
+    staffStoreSel.innerHTML=`<option value="0">🏪 ${s0}</option><option value="1">🏪 ${s1}</option>`;
+    staffStoreSel.value=cur;
+  }
 }
 
 function populateStaffSelect(){
   const sel=document.getElementById('loginStaffSelect');
-  sel.innerHTML=ALL_STAFF.map(s=>`<option value="${s.id}">${s.store===0?'本店':'2号店'} - ${s.name}</option>`).join('');
+  if(!sel) return;
+  const storeSel=document.getElementById('loginStaffStore');
+  const store=storeSel?+storeSel.value:0;
+  const list=ALL_STAFF.filter(s=>s.store===store).sort((a,b)=>String(a.name).localeCompare(String(b.name),'ja'));
+  sel.innerHTML = list.length
+    ? list.map(s=>`<option value="${s.id}">${s.name}</option>`).join('')
+    : '<option value="">（この店舗にスタッフがいません）</option>';
 }
 
 // ============ ADMIN TAB SWITCH (extended) ============
@@ -2803,6 +2817,8 @@ async function loadStaffFromDb(){
   try {
     const rows = await sbFetch('staff?select=id,name,store,role,emp_type,target_hours,passcode,can_main&order=store,id');
     if(!rows||!rows.length) return;
+    const dbStores = new Set(rows.map(r=>r.store));
+    const dbKeys = new Set(rows.map(r=>r.name+'_'+r.store));
     // Update ALL_STAFF with DB data
     rows.forEach(dbS=>{
       staffDbMap[dbS.name+'_'+dbS.store]=dbS.id;
@@ -2824,6 +2840,14 @@ async function loadStaffFromDb(){
         });
       }
     });
+    // DBに存在しないローカル項目（=改名前の古い名前など）を除去。
+    // その店舗がDBに登録済みの場合のみ削除し、未同期店舗のスタッフは残す。
+    for(let i=ALL_STAFF.length-1;i>=0;i--){
+      const s=ALL_STAFF[i];
+      if(dbStores.has(s.store) && !dbKeys.has(s.name+'_'+s.store)){
+        ALL_STAFF.splice(i,1);
+      }
+    }
     populateStaffSelect();
     renderLeft();
     console.log('Staff loaded from DB:', rows.length);
@@ -2938,6 +2962,8 @@ function init(){
   populateStoreSelects();
   // Load settings from DB
   loadSettingsFromDb();
+  // スタッフ情報もDBから読み込む（改名・店舗を反映。スタッフ端末でも最新の名前にする）
+  loadStaffFromDb();
   // Set default values for deadline inputs
   const now=new Date();
   document.getElementById('deadlineMonth').value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
