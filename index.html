@@ -105,6 +105,8 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
 .timeline-body{flex:1;overflow:auto;position:relative}
 .timeline-grid{position:relative}
 .grid-row{height:48px;border-bottom:1px solid var(--gray100);position:absolute;left:0;right:0}
+.add-mode .grid-row{touch-action:none;-webkit-user-select:none;cursor:crosshair}
+.add-mode .timeline-grid{background:rgba(37,99,235,.03)}
 .grid-row:hover{background:rgba(37,99,235,.015)}
 .grid-line{position:absolute;top:0;bottom:0;width:1px;background:var(--gray100);pointer-events:none}
 .grid-line.hour{background:var(--gray200)}
@@ -386,6 +388,7 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
         <button class="vtab" onclick="setView('month',this)">月</button>
       </div>
       <button class="btn" id="fitBtn" onclick="toggleFit()" style="font-size:11px;padding:3px 10px" title="1日全体とスタッフ全員を画面内に収めて表示">⊞ 全体表示</button>
+      <button class="btn" id="addModeBtn" onclick="toggleAddMode()" style="font-size:11px;padding:3px 10px" title="ONの間だけ空き枠をドラッグしてシフトを追加できます（普段はOFFで閲覧/スクロール）">✏️ 追加</button>
       <div style="display:flex;align-items:center;gap:6px">
         <input id="staffSearch" class="staff-search" type="text" placeholder="スタッフ検索..." oninput="filterStaff(this.value)" style="width:120px;flex:none">
         <button id="groupToggleBtn" onclick="toggleGrouping()" title="グループ表示切替" style="flex-shrink:0;width:26px;height:26px;border-radius:5px;border:1px solid var(--primary);background:var(--primary-light);color:var(--primary);cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;transition:all .13s">☰</button>
@@ -766,6 +769,7 @@ const T_START=7,T_END=24;
 let PX_MIN=2.5;          // 1分あたりのpx（全体表示時に動的変更）
 let ROW_H=48, BAR_H=36, BAR_TOP=6; // 行高・バー高・バー上オフセット（全体表示時に縮小）
 let fitMode=false;       // 全体表示モード
+let addMode=false;       // 追加モード（ONの間だけタッチでシフト描画。既定OFF=閲覧/スクロール）
 function twPx(){return (T_END-T_START)*60*PX_MIN}
 function m2px(m){return (m-T_START*60)*PX_MIN}
 function px2m(px){return Math.round(px/PX_MIN)+T_START*60}
@@ -1358,47 +1362,26 @@ function getTouchPos(e, grid){
 
 function onRowTouchStart(e, sid){
   if(e.touches.length > 1) return;
-  // 全体表示は閲覧専用（タッチはスクロール、バーのタップで編集）
-  if(fitMode) return;
+  // 追加モードOFF（既定）または全体表示中は閲覧専用 → ネイティブスクロールに任せる
+  if(!addMode || fitMode) return;
+  e.preventDefault();
   const row = e.currentTarget;
   const grid = document.getElementById('timelineGrid');
   const tb = document.getElementById('timelineBody');
   const tbRect = tb.getBoundingClientRect();
   const touch = e.touches[0];
-  const startClientX = touch.clientX, startClientY = touch.clientY;
-  const startRawX = startClientX - tbRect.left + tb.scrollLeft;
+  const startRawX = touch.clientX - tbRect.left + tb.scrollLeft;
   const startMin = snap(px2m(startRawX - 180));
   const rowTop = row.offsetTop;
   const dkey = dk(getDates()[0]);
-  let drawing = false, cancelled = false, gh = null;
 
-  // 長押し（約2秒静止）でシフト描画を開始。動かせばスクロールとして扱う。
-  const holdTimer = setTimeout(function(){
-    if(cancelled) return;
-    drawing = true;
-    gh = document.createElement('div');
-    gh.style.cssText = 'position:absolute;height:'+BAR_H+'px;border-radius:4px;pointer-events:none;z-index:25;background:rgba(37,99,235,.2);border:2px dashed #2563EB;top:'+(rowTop+BAR_TOP)+'px;left:'+(180+m2px(startMin))+'px;width:4px;';
-    grid.appendChild(gh);
-    if(navigator.vibrate) try{navigator.vibrate(12);}catch(_){}
-  }, 2000);
-
-  function cleanup(){
-    clearTimeout(holdTimer);
-    row.removeEventListener('touchmove', touchMove);
-    row.removeEventListener('touchend', touchEnd);
-    row.removeEventListener('touchcancel', touchEnd);
-  }
+  let gh = document.createElement('div');
+  gh.style.cssText = 'position:absolute;height:'+BAR_H+'px;border-radius:4px;pointer-events:none;z-index:25;background:rgba(37,99,235,.2);border:2px dashed #2563EB;top:'+(rowTop+BAR_TOP)+'px;left:'+(180+m2px(startMin))+'px;width:4px;';
+  grid.appendChild(gh);
 
   function touchMove(ev){
+    ev.preventDefault();
     const t = ev.touches[0];
-    if(!drawing){
-      // 長押し成立前に動いたら → スクロール意図とみなして中止（preventDefaultしない）
-      if(Math.abs(t.clientX-startClientX) > 8 || Math.abs(t.clientY-startClientY) > 8){
-        cancelled = true; cleanup();
-      }
-      return;
-    }
-    ev.preventDefault(); // 描画中だけスクロール抑止
     const rawX = t.clientX - tbRect.left + tb.scrollLeft - 180;
     const endMin = snap(px2m(rawX));
     const s = Math.min(startMin, endMin), en = Math.max(startMin+15, endMin);
@@ -1407,9 +1390,11 @@ function onRowTouchStart(e, sid){
   }
 
   function touchEnd(ev){
-    cleanup();
-    if(!drawing){ return; }              // 描画していなければ何もしない（=スクロール/タップ）
-    if(gh){ gh.remove(); gh = null; }
+    row.removeEventListener('touchmove', touchMove);
+    row.removeEventListener('touchend', touchEnd);
+    row.removeEventListener('touchcancel', touchEnd);
+    if(!gh) return;
+    gh.remove(); gh = null;
     const t = ev.changedTouches[0];
     const rawX = t.clientX - tbRect.left + tb.scrollLeft - 180;
     const endMin = snap(px2m(rawX));
@@ -1430,6 +1415,20 @@ function onRowTouchStart(e, sid){
   row.addEventListener('touchmove', touchMove, {passive:false});
   row.addEventListener('touchend', touchEnd);
   row.addEventListener('touchcancel', touchEnd);
+}
+
+// 追加モードの切替（ONの間だけタッチでシフトを引ける。既定はOFF=閲覧/スクロール）
+function toggleAddMode(){
+  addMode=!addMode;
+  if(addMode && fitMode) toggleFit(); // 全体表示中は描画不可のため解除
+  const btn=document.getElementById('addModeBtn');
+  if(btn){
+    btn.textContent = addMode ? '✏️ 追加中：完了' : '✏️ 追加';
+    btn.classList.toggle('btn-primary', addMode);
+  }
+  const tlv=document.getElementById('adminTimelineView');
+  if(tlv) tlv.classList.toggle('add-mode', addMode);
+  showToast(addMode ? '追加モード：空き枠を指でドラッグして作成' : '閲覧モードに戻りました');
 }
 
 function onRowMD(e, sid){
