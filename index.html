@@ -2225,14 +2225,21 @@ document.getElementById('shortageOverlay').addEventListener('click',e=>{
   if(e.target===document.getElementById('shortageOverlay')) closeShortageAlert();
 });
 
-function saveDeadline(){
+async function saveDeadline(){
   const month=document.getElementById('deadlineMonth').value;
   const dt=document.getElementById('deadlineDt').value;
   if(!month||!dt){showToast('月と日時を入力してください');return;}
   const existing=deadlines.findIndex(d=>d.month===month);
-  if(existing>=0) deadlines[existing].dt=dt;
-  else deadlines.push({month,dt});
+  if(existing>=0){ deadlines[existing].dt=dt; deadlines[existing].reminded=false; }
+  else deadlines.push({month,dt,reminded:false});
+  await persistDeadlines();
   renderDeadlineList();showToast('締め切りを設定しました ✓','success');
+}
+
+// 締め切り一覧を settings テーブルに保存（全端末で共有）
+async function persistDeadlines(){
+  try { await saveSettingToDb('deadlines', JSON.stringify(deadlines)); }
+  catch(e){ console.error('persistDeadlines error:', e); }
 }
 
 function renderDeadlineList(){
@@ -2244,14 +2251,70 @@ function renderDeadlineList(){
     return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--gray100)">
       <div style="flex:1">
         <div style="font-size:11px;font-weight:600">${d.month.replace('-','年')}月</div>
-        <div style="font-size:10px;color:${passed?'var(--red)':'var(--gray500)'}">締め切り: ${dt.getMonth()+1}/${dt.getDate()} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')} ${passed?'（締め切り済）':''}</div>
+        <div style="font-size:10px;color:${passed?'var(--red)':'var(--gray500)'}">締め切り: ${dt.getMonth()+1}/${dt.getDate()} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')} ${passed?'（締め切り済）':''}${d.reminded?' ・リマインド済':''}</div>
       </div>
+      ${passed?'':`<button class="btn btn-sm" style="font-size:10px;padding:3px 8px;color:var(--primary)" onclick="sendDeadlineReminder(${i},true)">リマインド送信</button>`}
       <button class="btn btn-sm" style="font-size:10px;padding:3px 8px;color:var(--red)" onclick="removeDeadline(${i})">削除</button>
     </div>`;
   }).join('');
 }
 
-function removeDeadline(i){deadlines.splice(i,1);renderDeadlineList();}
+async function removeDeadline(i){deadlines.splice(i,1);await persistDeadlines();renderDeadlineList();}
+
+// 締め切り前リマインドのウィンドウ（締め切りの何時間前から通知するか）
+const DEADLINE_REMINDER_HOURS = 24;
+
+// 全締め切りをチェックし、締め切り間近のものを自動リマインド（重複送信なし）
+async function checkDeadlineReminders(){
+  if(!deadlines.length) return;
+  const now = new Date();
+  let changed = false;
+  for(let i=0;i<deadlines.length;i++){
+    const d = deadlines[i];
+    if(d.reminded) continue;
+    const dt = new Date(d.dt);
+    const hoursLeft = (dt - now) / 3600000;
+    // 締め切りまで DEADLINE_REMINDER_HOURS 以内（かつ未経過）なら送信
+    if(hoursLeft > 0 && hoursLeft <= DEADLINE_REMINDER_HOURS){
+      const ok = await sendDeadlineReminder(i, false);
+      if(ok) changed = true;
+    }
+  }
+  if(changed) await persistDeadlines();
+}
+
+// 指定インデックスの締め切りについて、全スタッフへリマインドを送信
+// manual=true の場合はトースト表示＋締め切り済みでも送信可
+async function sendDeadlineReminder(i, manual){
+  const d = deadlines[i];
+  if(!d) return false;
+  const dt = new Date(d.dt);
+  const [y,m] = d.month.split('-');
+  const whenStr = `${dt.getMonth()+1}月${dt.getDate()}日 ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
+  const msg = `【締め切りのお知らせ】${(+m)}月分の希望シフト提出の締め切りが近づいています。締め切り: ${whenStr} までに提出してください。`;
+  try {
+    // DBから全スタッフを取得して送信
+    const staffRows = await sbFetch('staff?select=id');
+    if(!staffRows || !staffRows.length){
+      if(manual) showToast('送信対象のスタッフがいません');
+      return false;
+    }
+    for(const s of staffRows){
+      await sendPushToStaff(s.id, msg, '希望提出リマインド');
+    }
+    d.reminded = true;
+    renderDeadlineList();
+    if(manual){
+      await persistDeadlines();
+      showToast(`${staffRows.length}名にリマインドを送りました ✓`,'success');
+    }
+    return true;
+  } catch(e){
+    console.error('sendDeadlineReminder error:', e);
+    if(manual) showToast('リマインド送信に失敗しました','error');
+    return false;
+  }
+}
 
 async function loadSettingsFromDb(){
   try {
@@ -2267,6 +2330,12 @@ async function loadSettingsFromDb(){
         if(el) el.value=r.value;
       }
       if(r.key==='adminPasscode') adminPasscode=r.value;
+      if(r.key==='deadlines'){
+        try {
+          const parsed = JSON.parse(r.value);
+          if(Array.isArray(parsed)) deadlines = parsed;
+        } catch(e){ console.error('deadlines parse error:', e); }
+      }
     });
     populateStoreSelects();
     // Update staff management tabs if visible
@@ -2277,6 +2346,8 @@ async function loadSettingsFromDb(){
     // Re-render staff management if it's currently shown
     const staffView=document.getElementById('adminStaffView');
     if(staffView&&staffView.style.display!=='none') renderStaffMgmt();
+    // 締め切り一覧を再描画（DBから読み込んだ値を反映）
+    renderDeadlineList();
   } catch(e){ console.log('loadSettings error:',e); }
 }
 
@@ -2371,6 +2442,8 @@ async function doAdminLogin(){
     await loadStaffFromDb();
     await upsertAllStaffToDb();
     render();
+    // 締め切り間近の月があれば自動でリマインド送信（重複なし）
+    checkDeadlineReminders();
   });
 }
 
@@ -2483,8 +2556,10 @@ async function registerPush(staffDbId) {
     return;
   }
   try {
-    const reg = await navigator.serviceWorker.register('/sw.js').catch(()=>null);
+    // 相対パスで登録（プロジェクトページ /rakushihu/ 配下のため '/sw.js' だと404になる）
+    const reg = await navigator.serviceWorker.register('sw.js').catch(()=>null);
     if(!reg) return;
+    await navigator.serviceWorker.ready;
     const perm = await Notification.requestPermission();
     if(perm !== 'granted') return;
     const sub = await reg.pushManager.subscribe({
@@ -2509,13 +2584,49 @@ function urlBase64ToUint8Array(base64String) {
   return outputArray;
 }
 
-async function sendPushToStaff(staffDbId, message) {
-  // Store notification in DB - Supabase Edge Function will handle actual push
-  await sbFetch('notifications', 'POST', {
-    staff_id: staffDbId,
-    message: message,
-    is_read: false
-  });
+// Edge Function エンドポイント
+const SEND_PUSH_URL = SUPABASE_URL + '/functions/v1/send-push';
+
+// staffDbId 宛にアプリ内通知（DB記録）＋ Web Push（Edge Function経由）を送る
+// title は省略可（既定: 'らくシフト'）
+async function sendPushToStaff(staffDbId, message, title, url) {
+  // 1) アプリ内通知としてDBに記録（ログイン時に checkNotifications で表示される）
+  try {
+    await sbFetch('notifications', 'POST', {
+      staff_id: staffDbId,
+      message: message,
+      is_read: false
+    });
+  } catch(e) { console.error('notifications insert error:', e); }
+
+  // 2) Edge Function 経由で実際の Web Push を送信
+  //    Edge Function 側で staff_id から push_subscription を引いて送信する想定。
+  try {
+    const res = await fetch(SEND_PUSH_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'apikey': SUPABASE_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        staff_id: staffDbId,
+        title: title || 'らくシフト',
+        body: message,
+        url: url || (location.origin + location.pathname)
+      })
+    });
+    if(!res.ok){
+      const t = await res.text().catch(()=> '');
+      console.error('send-push error ['+res.status+']:', t);
+      return false;
+    }
+    return true;
+  } catch(e){
+    // プッシュ送信に失敗してもアプリ内通知は残るので致命的ではない
+    console.error('send-push fetch error:', e);
+    return false;
+  }
 }
 
 // ============ SUPABASE DATA SYNC ============
