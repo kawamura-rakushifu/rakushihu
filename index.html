@@ -242,7 +242,7 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
   .view-tabs .vtab{padding:3px 8px;font-size:11px}
   .date-label{font-size:11px;min-width:120px}
   .summary-chips{display:none}
-  .staff-label{width:130px}
+  .staff-label{width:180px}
   .staff-label .avatar{width:20px;height:20px;font-size:8px}
   .staff-label .staff-name-txt{font-size:10px}
   .staff-label .staff-role-txt{font-size:9px}
@@ -386,6 +386,10 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
         <button class="vtab" onclick="setView('month',this)">月</button>
       </div>
       <button class="btn" id="fitBtn" onclick="toggleFit()" style="font-size:11px;padding:3px 10px" title="1日全体とスタッフ全員を画面内に収めて表示">⊞ 全体表示</button>
+      <div style="display:flex;align-items:center;gap:6px">
+        <input id="staffSearch" class="staff-search" type="text" placeholder="スタッフ検索..." oninput="filterStaff(this.value)" style="width:120px;flex:none">
+        <button id="groupToggleBtn" onclick="toggleGrouping()" title="グループ表示切替" style="flex-shrink:0;width:26px;height:26px;border-radius:5px;border:1px solid var(--primary);background:var(--primary-light);color:var(--primary);cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;transition:all .13s">☰</button>
+      </div>
       <div class="date-nav">
         <button class="nav-btn" onclick="navigate(-1)">‹</button>
         <div class="date-label" id="dateLabel"></div>
@@ -405,11 +409,8 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
   <div class="main-area">
     <!-- Timeline view -->
     <div id="adminTimelineView" style="display:flex;flex:1;overflow:hidden">
-      <div class="left-panel">
-        <div class="left-header">
-          <input class="staff-search" type="text" placeholder="スタッフ検索..." oninput="filterStaff(this.value)" style="flex:1">
-        <button id="groupToggleBtn" onclick="toggleGrouping()" title="グループ表示切替" style="flex-shrink:0;width:26px;height:26px;border-radius:5px;border:1px solid var(--gray200);background:#fff;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;transition:all .13s" >☰</button>
-        </div>
+      <!-- 左パネルは廃止。名前はタイムライン内に表示。leftBodyはJS互換のため非表示で残す -->
+      <div class="left-panel" style="display:none">
         <div class="left-body" id="leftBody"></div>
       </div>
       <div class="right-panel">
