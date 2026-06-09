@@ -520,6 +520,9 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
       </div>
     </div>
   </div>
+  <!-- シフト追加モードのフローティングボタン（シフト表タブのときだけ表示） -->
+  <button id="addFab" onclick="toggleAddMode()" title="シフト追加モードのON/OFF"
+    style="display:flex;position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom));z-index:60;width:56px;height:56px;border-radius:50%;border:none;background:var(--primary);color:#fff;font-size:24px;line-height:1;box-shadow:0 4px 14px rgba(37,99,235,.45);cursor:pointer;align-items:center;justify-content:center">✏️</button>
 </div>
 
 <!-- ========== STAFF SCREEN ========== -->
@@ -883,6 +886,9 @@ function switchAdminTab(tab,el){
   document.getElementById('adminStaffView').style.display=tab==='staff'?'flex':'none';
   document.getElementById('adminSettingsView').style.display=tab==='settings'?'flex':'none';
   document.getElementById('timelineControls').style.display=tab==='timeline'?'flex':'none';
+  const fab=document.getElementById('addFab');
+  if(fab) fab.style.display=tab==='timeline'?'flex':'none';
+  if(tab!=='timeline' && addMode) toggleAddMode(); // 別タブに移ったら追加モード解除
   if(tab==='requests') renderRequestPanel();
   if(tab==='staff'){staffMgmtStore=currentStore;renderStaffMgmt();}
   if(tab==='settings') renderSettings();
@@ -1428,6 +1434,12 @@ function toggleAddMode(){
   }
   const tlv=document.getElementById('adminTimelineView');
   if(tlv) tlv.classList.toggle('add-mode', addMode);
+  const fab=document.getElementById('addFab');
+  if(fab){
+    fab.textContent = addMode ? '✓' : '✏️';
+    fab.style.background = addMode ? 'var(--green)' : 'var(--primary)';
+    fab.title = addMode ? '追加モード中（タップで終了）' : 'シフト追加モードのON/OFF';
+  }
   showToast(addMode ? '追加モード：空き枠を指でドラッグして作成' : '閲覧モードに戻りました');
 }
 
