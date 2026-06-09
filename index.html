@@ -1047,7 +1047,8 @@ function renderTimeline(){
   if(fitMode && isSingle){
     const tb=document.getElementById('timelineBody');
     const availW=(tb?tb.clientWidth:360)-180-6; // 180=名前列, 6=余白
-    PX_MIN=Math.max(0.18, availW/((T_END-T_START)*60));
+    // 画面幅に合わせつつ、時間軸が読める下限(0.45)を確保（足りなければ少し横スクロール）
+    PX_MIN=Math.max(0.45, availW/((T_END-T_START)*60));
   } else if(!fitMode){
     PX_MIN=2.5;
   }
@@ -1080,12 +1081,17 @@ function renderTimeline(){
         }
       });
     });
+    // 縮尺に応じて時刻ラベルの間隔を自動調整（重なり防止）
+    const labelStep=Math.max(1,Math.ceil(40/(60*PX_MIN)));
     let h='';
     for(let hr=T_START;hr<=T_END;hr++){
       const px=m2px(hr*60);
+      const onStep=((hr-T_START)%labelStep===0)||hr===T_END;
       const cnt=hCounts[hr]||0;
-      const cntHtml=cnt>0?`<span style="position:absolute;bottom:3px;left:0;right:0;text-align:center;font-size:10px;font-weight:700;color:var(--primary);background:var(--primary-light);border-radius:3px;line-height:15px;">${cnt}人</span>`:'';
-      h+=`<div class="time-tick" style="left:${px}px">${cntHtml}<span class="time-tick-label">${hr}:00</span><div class="time-tick-line"></div></div>`;
+      // 人数バッジは十分にズームしているとき(=ラベル毎時表示)だけ
+      const cntHtml=(labelStep===1&&cnt>0)?`<span style="position:absolute;bottom:3px;left:0;right:0;text-align:center;font-size:10px;font-weight:700;color:var(--primary);background:var(--primary-light);border-radius:3px;line-height:15px;">${cnt}人</span>`:'';
+      const lblHtml=onStep?`<span class="time-tick-label">${hr}:00</span>`:'';
+      if(onStep||cntHtml) h+=`<div class="time-tick" style="left:${px}px">${cntHtml}${lblHtml}<div class="time-tick-line"></div></div>`;
     }
     hInner.innerHTML=h;
   } else {
@@ -1108,9 +1114,10 @@ function renderTimeline(){
 
   // Grid lines
   if(isSingle){
+    const showSub=PX_MIN>=1.2; // 縮尺が小さいときは補助線を省略
     for(let hr=T_START;hr<=T_END;hr++){
       html+=`<div class="grid-line hour" style="left:${180+m2px(hr*60)}px;background:#9CA3AF"></div>`;
-      if(hr<T_END){
+      if(hr<T_END && showSub){
         html+=`<div class="grid-line" style="left:${180+m2px(hr*60+15)}px;border-left:1px dashed #C4C9D4"></div>`;
         html+=`<div class="grid-line" style="left:${180+m2px(hr*60+30)}px;background:#C4C9D4"></div>`;
         html+=`<div class="grid-line" style="left:${180+m2px(hr*60+45)}px;border-left:1px dashed #C4C9D4"></div>`;
