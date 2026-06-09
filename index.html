@@ -1358,24 +1358,47 @@ function getTouchPos(e, grid){
 
 function onRowTouchStart(e, sid){
   if(e.touches.length > 1) return;
-  e.preventDefault();
+  // 全体表示は閲覧専用（タッチはスクロール、バーのタップで編集）
+  if(fitMode) return;
+  const row = e.currentTarget;
   const grid = document.getElementById('timelineGrid');
   const tb = document.getElementById('timelineBody');
   const tbRect = tb.getBoundingClientRect();
   const touch = e.touches[0];
-  const startRawX = touch.clientX - tbRect.left + tb.scrollLeft;
+  const startClientX = touch.clientX, startClientY = touch.clientY;
+  const startRawX = startClientX - tbRect.left + tb.scrollLeft;
   const startMin = snap(px2m(startRawX - 180));
-  const rowTop = e.currentTarget.offsetTop;
+  const rowTop = row.offsetTop;
   const dkey = dk(getDates()[0]);
-  const isBreakMode = inputMode === 'break';
+  let drawing = false, cancelled = false, gh = null;
 
-  let gh = document.createElement('div');
-  gh.style.cssText = 'position:absolute;height:36px;border-radius:4px;pointer-events:none;z-index:25;background:rgba(37,99,235,.2);border:2px dashed #2563EB;top:'+(rowTop+6)+'px;left:'+(180+m2px(startMin))+'px;width:4px;';
-  grid.appendChild(gh);
+  // 長押し（約260ms静止）でシフト描画を開始。動かせばスクロールとして扱う。
+  const holdTimer = setTimeout(function(){
+    if(cancelled) return;
+    drawing = true;
+    gh = document.createElement('div');
+    gh.style.cssText = 'position:absolute;height:'+BAR_H+'px;border-radius:4px;pointer-events:none;z-index:25;background:rgba(37,99,235,.2);border:2px dashed #2563EB;top:'+(rowTop+BAR_TOP)+'px;left:'+(180+m2px(startMin))+'px;width:4px;';
+    grid.appendChild(gh);
+    if(navigator.vibrate) try{navigator.vibrate(12);}catch(_){}
+  }, 260);
+
+  function cleanup(){
+    clearTimeout(holdTimer);
+    row.removeEventListener('touchmove', touchMove);
+    row.removeEventListener('touchend', touchEnd);
+    row.removeEventListener('touchcancel', touchEnd);
+  }
 
   function touchMove(ev){
-    ev.preventDefault();
     const t = ev.touches[0];
+    if(!drawing){
+      // 長押し成立前に動いたら → スクロール意図とみなして中止（preventDefaultしない）
+      if(Math.abs(t.clientX-startClientX) > 8 || Math.abs(t.clientY-startClientY) > 8){
+        cancelled = true; cleanup();
+      }
+      return;
+    }
+    ev.preventDefault(); // 描画中だけスクロール抑止
     const rawX = t.clientX - tbRect.left + tb.scrollLeft - 180;
     const endMin = snap(px2m(rawX));
     const s = Math.min(startMin, endMin), en = Math.max(startMin+15, endMin);
@@ -1384,10 +1407,9 @@ function onRowTouchStart(e, sid){
   }
 
   function touchEnd(ev){
-    e.currentTarget.removeEventListener('touchmove', touchMove);
-    e.currentTarget.removeEventListener('touchend', touchEnd);
-    if(!gh) return;
-    gh.remove(); gh = null;
+    cleanup();
+    if(!drawing){ return; }              // 描画していなければ何もしない（=スクロール/タップ）
+    if(gh){ gh.remove(); gh = null; }
     const t = ev.changedTouches[0];
     const rawX = t.clientX - tbRect.left + tb.scrollLeft - 180;
     const endMin = snap(px2m(rawX));
@@ -1401,28 +1423,18 @@ function onRowTouchStart(e, sid){
     const arr = getShifts(sid, dkey);
     arr.push(sh);
     setShifts(sid, dkey, arr);
-    const c = COLORS_LIST[sh.colorIdx]||COLORS_LIST[0];
-    const barEl = document.createElement('div');
-    barEl.className = 'shift-bar';
-    barEl.dataset.sid = sid; barEl.dataset.dk = dkey; barEl.dataset.shid = shId;
-    barEl.style.cssText = 'left:'+(180+m2px(sh.start))+'px;width:'+Math.max(8,m2px(sh.end)-m2px(sh.start))+'px;top:'+(rowTop+6)+'px;background:'+c.bg+';color:'+c.fg+';border:1.5px solid '+c.fg+'44;position:absolute;height:36px;border-radius:6px;cursor:pointer;display:flex;align-items:center;padding:0 8px;font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;z-index:10;box-shadow:0 1px 3px rgba(0,0,0,.1)';
-    barEl.addEventListener('mousedown', function(ev){handleBarMousedown(ev,sid,dkey,shId);});
-    barEl.addEventListener('click', function(ev){openModal(sid,dkey,shId,ev);});
-    const sp = document.createElement('span');
-    sp.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;font-size:11px;pointer-events:none';
-    sp.textContent = sh.pos+' '+fmt(sh.start)+'-'+fmt(sh.end);
-    barEl.appendChild(sp);
-    grid.appendChild(barEl);
-    renderLeft(); renderSummary(); render();
+    renderLeft(); renderSummary(); render();   // renderBar が正しい位置で再描画する
     showToast('シフトを追加しました');
   }
 
-  e.currentTarget.addEventListener('touchmove', touchMove, {passive:false});
-  e.currentTarget.addEventListener('touchend', touchEnd);
+  row.addEventListener('touchmove', touchMove, {passive:false});
+  row.addEventListener('touchend', touchEnd);
+  row.addEventListener('touchcancel', touchEnd);
 }
 
 function onRowMD(e, sid){
   if(e.button!==0) return;
+  if(window.matchMedia && matchMedia('(pointer:coarse)').matches) return; // タッチ端末はタッチ処理に任せる
   if(e.target.closest('.shift-bar')||e.target.closest('.break-bar')) return;
   const grid=document.getElementById('timelineGrid');
   const tb=document.getElementById('timelineBody');
