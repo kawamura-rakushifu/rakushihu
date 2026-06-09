@@ -385,6 +385,7 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
         <button class="vtab" onclick="setView('halfmonth',this)">半月</button>
         <button class="vtab" onclick="setView('month',this)">月</button>
       </div>
+      <button class="btn" id="fitBtn" onclick="toggleFit()" style="font-size:11px;padding:3px 10px" title="1日全体とスタッフ全員を画面内に収めて表示">⊞ 全体表示</button>
       <div class="date-nav">
         <button class="nav-btn" onclick="navigate(-1)">‹</button>
         <div class="date-label" id="dateLabel"></div>
@@ -760,7 +761,10 @@ staffMonthDate.setHours(0,0,0,0);
 staffMonthDate.setDate(1);
 let selectedCalDay=null;
 
-const T_START=7,T_END=24,PX_MIN=2.5;
+const T_START=7,T_END=24;
+let PX_MIN=2.5;          // 1分あたりのpx（全体表示時に動的変更）
+let ROW_H=48, BAR_H=36, BAR_TOP=6; // 行高・バー高・バー上オフセット（全体表示時に縮小）
+let fitMode=false;       // 全体表示モード
 function twPx(){return (T_END-T_START)*60*PX_MIN}
 function m2px(m){return (m-T_START*60)*PX_MIN}
 function px2m(px){return Math.round(px/PX_MIN)+T_START*60}
@@ -958,6 +962,19 @@ function render(){
   renderDateLabel();renderSummary();renderLeft();renderTimeline();renderNowLine();updatePendingCount();
 }
 
+// 全体表示モードの切替（1日を横スクロールなしで＋スタッフ全員を画面内に）
+function toggleFit(){
+  fitMode=!fitMode;
+  const btn=document.getElementById('fitBtn');
+  if(btn){
+    btn.textContent = fitMode ? '⊞ 通常表示' : '⊞ 全体表示';
+    btn.classList.toggle('btn-primary', fitMode);
+  }
+  // 全体表示中は休憩等の細かい編集が難しいため、シフト入力モードに戻す
+  if(fitMode && typeof setInputMode==='function' && inputMode==='break') setInputMode('shift');
+  render();
+}
+
 function renderDateLabel(){
   const dates=getDates();const lbl=document.getElementById('dateLabel');
   if(currentView==='day'){const d=dates[0];lbl.textContent=`${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日（${DAY_JP[d.getDay()]}）`;}
@@ -1004,9 +1021,35 @@ function renderLeft(){
   }).join('');
 }
 
+// シフトバーのHTML文字列を返す（renderTimelineから呼ばれる）
+// 既存のバー生成（タッチ追加/リサイズ）と同じ見た目・操作に合わせている
+function renderBar(sh, sid, dkey, top, left, width, isMulti){
+  const c = COLORS_LIST[sh.colorIdx] || COLORS_LIST[0];
+  const t = top + BAR_TOP;
+  const label = (sh.pos||'') + ' ' + fmt(sh.start) + '-' + fmt(sh.end);
+  const handles = isMulti ? '' :
+    `<div class="resize-handle resize-left" onmousedown="handleResizeMousedown(event,'left',${sid},'${dkey}',${sh.id})"></div>` +
+    `<div class="resize-handle resize-right" onmousedown="handleResizeMousedown(event,'right',${sid},'${dkey}',${sh.id})"></div>`;
+  return `<div class="shift-bar" data-sid="${sid}" data-dk="${dkey}" data-shid="${sh.id}" ` +
+    `style="left:${left}px;width:${width}px;top:${t}px;height:${BAR_H}px;background:${c.bg};color:${c.fg};border:1.5px solid ${c.fg}44;font-size:${isMulti?10:11}px" ` +
+    `onmousedown="handleBarMousedown(event,${sid},'${dkey}',${sh.id})" onclick="openModal(${sid},'${dkey}',${sh.id},event)">` +
+    handles +
+    `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;pointer-events:none">${label}</span>` +
+  `</div>`;
+}
+
 function renderTimeline(){
   const dates=getDates(),groups=getStaffGrouped();
   const isSingle=currentView==='day';
+  // 全体表示モード: 行高・バー高を縮小し、1日表示は時間軸を画面幅に収める
+  if(fitMode){ ROW_H=32; BAR_H=24; BAR_TOP=4; } else { ROW_H=48; BAR_H=36; BAR_TOP=6; }
+  if(fitMode && isSingle){
+    const tb=document.getElementById('timelineBody');
+    const availW=(tb?tb.clientWidth:360)-180-6; // 180=名前列, 6=余白
+    PX_MIN=Math.max(0.18, availW/((T_END-T_START)*60));
+  } else if(!fitMode){
+    PX_MIN=2.5;
+  }
   const colW=isSingle?twPx():Math.max(70,Math.floor((document.getElementById('timelineBody').clientWidth||600)/dates.length));
   const todayKey=dk(new Date());
   const ROW_H_HEADER=28;
@@ -1018,7 +1061,7 @@ function renderTimeline(){
     g.members.forEach(s=>rows.push({type:'staff',s}));
   });
   let topY=0;
-  const rowTops=rows.map(r=>{const t=topY;topY+=r.type==='header'?ROW_H_HEADER:48;return t;});
+  const rowTops=rows.map(r=>{const t=topY;topY+=r.type==='header'?ROW_H_HEADER:ROW_H;return t;});
   const totalH=topY;
 
   // Header ticks
@@ -1089,7 +1132,7 @@ function renderTimeline(){
     const [sbg,sfg]=AV_COLORS[s.id%AV_COLORS.length];
     const hrs=fmtH(calcWeekH(s.id));
     const hasReq=getDates().some(d=>getRequests(s.id,dk(d)).some(r=>r.status==='pending'));
-    html+=`<div class="staff-label" style="top:${top}px;height:48px">
+    html+=`<div class="staff-label" style="top:${top}px;height:${ROW_H}px">
       <div class="avatar" style="background:${sbg};color:${sfg};width:24px;height:24px;font-size:9px;flex-shrink:0">${s.name.charAt(0)}</div>
       <div style="flex:1;min-width:0">
         <div style="font-size:11px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.name}</div>
@@ -1098,19 +1141,19 @@ function renderTimeline(){
       ${hasReq?`<div style="width:6px;height:6px;border-radius:50%;background:var(--amber);flex-shrink:0"></div>`:''}
       <div style="font-size:10px;color:var(--gray600);font-weight:500;flex-shrink:0">${hrs}h</div>
     </div>`;
-    html+=`<div class="grid-row" style="top:${top}px;height:48px;left:180px;right:0;position:absolute" data-sid="${s.id}" onmousedown="onRowMD(event,${s.id})" ontouchstart="onRowTouchStart(event,${s.id})"></div>`;
+    html+=`<div class="grid-row" style="top:${top}px;height:${ROW_H}px;left:180px;right:0;position:absolute" data-sid="${s.id}" onmousedown="onRowMD(event,${s.id})" ontouchstart="onRowTouchStart(event,${s.id})"></div>`;
     if(isSingle){
       const d=dates[0],dkey=dk(d);
       getRequests(s.id,dkey).forEach(r=>{
         const x=180+m2px(r.start),w=m2px(r.end)-m2px(r.start);
-        html+=`<div class="request-bar" style="left:${x}px;width:${Math.max(8,w)}px;top:${top+6}px;border-color:#D97706;background:#FFFBEB;color:#D97706" title="希望: ${fmt(r.start)}-${fmt(r.end)}">${r.pos||'希望'} ${fmt(r.start)}-${fmt(r.end)}</div>`;
+        html+=`<div class="request-bar" style="left:${x}px;width:${Math.max(8,w)}px;top:${top+BAR_TOP}px;height:${BAR_H}px;border-color:#D97706;background:#FFFBEB;color:#D97706" title="希望: ${fmt(r.start)}-${fmt(r.end)}">${r.pos||'希望'} ${fmt(r.start)}-${fmt(r.end)}</div>`;
       });
       getShifts(s.id,dkey).forEach(sh=>{
         html+=renderBar(sh,s.id,dkey,top,180+m2px(sh.start),Math.max(8,m2px(sh.end)-m2px(sh.start)));
       });
       getBreaks(s.id,dkey).forEach(br=>{
         const x=180+m2px(br.start),w=Math.max(8,m2px(br.end)-m2px(br.start));
-        html+=`<div class="break-bar" style="left:${x}px;width:${w}px;top:${top+6}px" data-sid="${s.id}" data-dk="${dkey}" data-brid="${br.id}" title="休憩 ${fmt(br.start)}〜${fmt(br.end)} (${Math.round(br.end-br.start)}分)" onmousedown="onBreakMD(event,${s.id},'${dkey}',${br.id})">☕ ${Math.round(br.end-br.start)}分</div>`;
+        html+=`<div class="break-bar" style="left:${x}px;width:${w}px;top:${top+BAR_TOP}px;height:${BAR_H}px" data-sid="${s.id}" data-dk="${dkey}" data-brid="${br.id}" title="休憩 ${fmt(br.start)}〜${fmt(br.end)} (${Math.round(br.end-br.start)}分)" onmousedown="onBreakMD(event,${s.id},'${dkey}',${br.id})">☕ ${Math.round(br.end-br.start)}分</div>`;
       });
     } else {
       dates.forEach((d,di)=>{
