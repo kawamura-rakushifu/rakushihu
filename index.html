@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>らくシフト</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=M+PLUS+Rounded+1c:wght@700&display=swap');
@@ -18,7 +18,7 @@
   --radius:8px;--radius-lg:12px;--radius-xl:16px;
   --shadow:0 1px 3px rgba(0,0,0,.1);--shadow-lg:0 8px 30px rgba(0,0,0,.12);
 }
-html,body{height:100%;overflow:hidden;font-family:var(--font);font-size:13px;color:var(--gray800);background:#EEF2FF}
+html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:var(--font);font-size:13px;color:var(--gray800);background:#EEF2FF}
 
 /* ========== SCREENS ========== */
 .screen{display:none;height:100vh;flex-direction:column}
@@ -248,7 +248,7 @@ html,body{height:100%;overflow:hidden;font-family:var(--font);font-size:13px;col
   .staff-label .staff-role-txt{font-size:9px}
   .staff-label .staff-hrs-txt{font-size:9px}
   /* Login card */
-  .login-card{width:calc(100vw - 32px);padding:24px 20px}
+  .login-card{width:calc(100% - 32px);max-width:360px;padding:24px 20px}
   .login-logo{font-size:22px}
   .num-btn{padding:10px;font-size:15px}
   /* Staff screen */
