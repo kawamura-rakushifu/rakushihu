@@ -178,11 +178,11 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
 .calendar-card{background:#fff;border-radius:var(--radius-lg);border:1px solid var(--gray200);padding:16px;min-width:300px;flex:1;max-width:380px}
 .cal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
 .cal-title{font-size:14px;font-weight:700}
-.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
+.cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px}
 .cal-day-name{text-align:center;font-size:10px;font-weight:700;color:var(--gray400);padding:3px 0}
 .cal-day-name.sun{color:var(--red)}
 .cal-day-name.sat{color:var(--primary)}
-.cal-day{aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;transition:all .12s;position:relative;border:1.5px solid transparent}
+.cal-day{min-width:0;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;transition:all .12s;position:relative;border:1.5px solid transparent}
 .cal-day:hover:not(.empty):not(.past){background:var(--primary-light);color:var(--primary)}
 .cal-day.empty{pointer-events:none}
 .cal-day.past{color:var(--gray300);pointer-events:none}
@@ -262,7 +262,7 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
   .login-logo{font-size:22px}
   .num-btn{padding:10px;font-size:15px}
   /* Staff screen */
-  .staff-sections{flex-direction:column}
+  .staff-sections{flex-direction:column;align-items:stretch}
   .calendar-card{max-width:100%;min-width:unset}
   /* Admin tabs */
   .admin-tabs .atab{padding:3px 8px;font-size:11px}
