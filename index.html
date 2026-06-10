@@ -565,6 +565,7 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
     <div style="margin-left:auto;font-size:11px;color:var(--gray500)" id="staffReqCount"></div>
   </div>
   <div class="staff-content">
+    <div id="staffDeadlineBanner" style="display:none;margin:0 0 12px;padding:9px 14px;border-radius:8px;font-size:12px;font-weight:600"></div>
     <div class="staff-sections">
       <div class="calendar-card">
         <div class="cal-head">
@@ -1966,10 +1967,32 @@ function staffNavMonth(d){
   renderCalendar();
 }
 
+// スタッフ画面に、表示中の月の希望提出締め切りを表示
+function renderStaffDeadline(){
+  const el=document.getElementById('staffDeadlineBanner');
+  if(!el) return;
+  const y=staffMonthDate.getFullYear(), mo=staffMonthDate.getMonth();
+  const monthKey=y+'-'+String(mo+1).padStart(2,'0');
+  const dl=deadlines.find(d=>d.month===monthKey);
+  if(!dl){ el.style.display='none'; return; }
+  el.style.display='block';
+  const dt=new Date(dl.dt), now=new Date();
+  const dateStr=`${dt.getMonth()+1}月${dt.getDate()}日 ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
+  if(dt<now){
+    el.style.background='var(--red-light)'; el.style.color='var(--red)';
+    el.innerHTML=`⛔ ${mo+1}月分の希望提出は締め切りました（${dateStr}）`;
+  } else {
+    const days=Math.ceil((dt-now)/86400000);
+    el.style.background='var(--amber-light)'; el.style.color='var(--amber)';
+    el.innerHTML=`📅 ${mo+1}月分の希望提出の締め切りは <b>${dateStr} まで</b>${days>0?`（あと${days}日）`:'（本日まで）'}`;
+  }
+}
+
 function renderCalendar(){
   const y=staffMonthDate.getFullYear(),mo=staffMonthDate.getMonth();
   document.getElementById('staffMonthLabel').textContent=`${y}年${mo+1}月`;
   document.getElementById('calTitle').textContent=`${y}年${mo+1}月`;
+  renderStaffDeadline();
   const firstDay=new Date(y,mo,1).getDay();
   const daysInMonth=new Date(y,mo+1,0).getDate();
   const today=new Date();today.setHours(0,0,0,0);
@@ -2501,6 +2524,9 @@ async function loadSettingsFromDb(){
     if(staffView&&staffView.style.display!=='none') renderStaffMgmt();
     // 締め切り一覧を再描画（DBから読み込んだ値を反映）
     renderDeadlineList();
+    // スタッフ画面が表示中なら締め切りバナーも更新
+    const staffScreenEl=document.getElementById('staffScreen');
+    if(staffScreenEl && staffScreenEl.style.display!=='none') renderStaffDeadline();
   } catch(e){ console.log('loadSettings error:',e); }
 }
 
