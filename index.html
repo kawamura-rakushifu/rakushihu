@@ -258,6 +258,8 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
 .toast.show{transform:translateX(-50%) translateY(0)}
 .toast.success{background:var(--green)}
 .toast.error{background:var(--red)}
+/* スマホ専用の自動作成ボタン（PC/タブレットは上部バーの自動作成を使う） */
+.autofill-m{display:none}
 
 /* ========== MOBILE RESPONSIVE ========== */
 @media (max-width: 768px) {
@@ -302,6 +304,7 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
 }
 @media (max-width: 480px) {
   .top-actions .btn:not(.btn-primary):not(.btn-green){display:none}
+  .autofill-m{display:inline-flex}
   .view-tabs{gap:0}
   .view-tabs .vtab{padding:3px 6px;font-size:10px}
   .date-label{font-size:10px;min-width:100px}
@@ -425,6 +428,7 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
         <button class="vtab" onclick="setView('month',this)">月</button>
       </div>
       <button class="btn" id="fitBtn" onclick="toggleFit()" style="font-size:11px;padding:3px 10px" title="1日全体とスタッフ全員を画面内に収めて表示">⊞ 全体表示</button>
+      <button class="btn btn-primary autofill-m" onclick="autoFill()" style="font-size:11px;padding:3px 10px">⚡ 自動作成</button>
       <div style="display:flex;align-items:center;gap:6px">
         <input id="staffSearch" class="staff-search" type="text" placeholder="スタッフ検索..." oninput="filterStaff(this.value)" style="width:120px;flex:none">
         <button id="groupToggleBtn" onclick="toggleGrouping()" title="グループ表示切替" style="flex-shrink:0;width:26px;height:26px;border-radius:5px;border:1px solid var(--primary);background:var(--primary-light);color:var(--primary);cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;transition:all .13s">☰</button>
@@ -3343,7 +3347,7 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0610-H（締切後は削除も不可）';
+  const BUILD_VER='ver 0610-I（スマホで自動作成）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   updateMobileButtons();
   // numpad built directly in HTML
