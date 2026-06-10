@@ -252,7 +252,7 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
 .btn-danger:hover{background:#FEE2E2}
 
 /* Toast */
-.toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%) translateY(60px);background:var(--gray800);color:#fff;padding:9px 18px;border-radius:8px;font-size:12px;font-weight:500;z-index:200;transition:transform .22s;white-space:nowrap;pointer-events:none}
+.toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%) translateY(60px);background:var(--gray800);color:#fff;padding:9px 18px;border-radius:8px;font-size:12px;font-weight:500;z-index:200;transition:transform .22s;max-width:88vw;white-space:normal;text-align:center;line-height:1.45;pointer-events:none}
 .toast.show{transform:translateX(-50%) translateY(0)}
 .toast.success{background:var(--green)}
 .toast.error{background:var(--red)}
@@ -2831,10 +2831,11 @@ function printShift(){
   </body></html>`);
   win.document.close();
 }
-function showToast(msg,type=''){
+function showToast(msg,type='',dur=2500){
   const t=document.getElementById('toast');
   t.textContent=msg;t.className='toast show'+(type?' '+type:'');
-  clearTimeout(t._to);t._to=setTimeout(()=>t.classList.remove('show'),2500);
+  clearTimeout(t._to);
+  if(dur>0) t._to=setTimeout(()=>t.classList.remove('show'),dur);
 }
 
 // ============ INIT ============
@@ -3168,44 +3169,50 @@ async function confirmShiftWithNotify() {
   const dates = getDates();
   const dkey = currentView==='day' ? dk(dates[0]) : null;
 
-  showToast('確定シフトを反映しています...', '');
-
-  // Sync staff to DB first
-  await syncStaffToDb();
+  // 進行中は消えないように dur=0
+  showToast('確定シフトを反映しています…', '', 0);
 
   const isManual = sh => !!sh.manual;
+  try {
+    // Sync staff to DB first
+    await syncStaffToDb();
 
-  // Save shifts（ドラッグで引いた確定分のみDBへ）
-  if(dkey) {
-    await saveShiftsToDb(dkey, true);
-    // Send push only to staff who have a dragged (manual) shift this day
-    const d = dates[0];
-    const staffWithShifts = getStaff().filter(s => getShifts(s.id, dkey).some(isManual));
-    let notified = 0;
-    for(const s of staffWithShifts) {
-      const dbId = staffDbMap[s.name+'_'+s.store];
-      if(!dbId) continue;
-      const manualShifts = getShifts(s.id, dkey).filter(isManual).sort((a,b)=>a.start-b.start);
-      if(!manualShifts.length) continue;
-      const dateStr = `${d.getMonth()+1}月${d.getDate()}日(${['日','月','火','水','木','金','土'][d.getDay()]})`;
-      const timeStr = manualShifts.map(sh=>`${fmt(sh.start)}〜${fmt(sh.end)}${sh.pos?' ('+sh.pos+')':''}`).join('、');
-      const msg = `${dateStr}のシフトが確定しました。${timeStr}`;
-      await sendPushToStaff(dbId, msg);
-      notified++;
+    // Save shifts（ドラッグで引いた確定分のみDBへ）
+    if(dkey) {
+      await saveShiftsToDb(dkey, true);
+      // Send push only to staff who have a dragged (manual) shift this day
+      const d = dates[0];
+      const staffWithShifts = getStaff().filter(s => getShifts(s.id, dkey).some(isManual));
+      let notified = 0;
+      for(const s of staffWithShifts) {
+        const dbId = staffDbMap[s.name+'_'+s.store];
+        if(!dbId) continue;
+        const manualShifts = getShifts(s.id, dkey).filter(isManual).sort((a,b)=>a.start-b.start);
+        if(!manualShifts.length) continue;
+        const dateStr = `${d.getMonth()+1}月${d.getDate()}日(${['日','月','火','水','木','金','土'][d.getDay()]})`;
+        const timeStr = manualShifts.map(sh=>`${fmt(sh.start)}〜${fmt(sh.end)}${sh.pos?' ('+sh.pos+')':''}`).join('、');
+        const msg = `${dateStr}のシフトが確定しました。${timeStr}`;
+        await sendPushToStaff(dbId, msg);
+        notified++;
+      }
+      // 下書き（案）が残っていれば知らせる
+      const draftCount = getStaff().reduce((n,s)=>n+getShifts(s.id,dkey).filter(sh=>!isManual(sh)).length,0);
+      let toast = notified>0
+        ? `✓ 確定シフトを反映し、${notified}名に通知しました`
+        : 'ドラッグで引いた確定シフトがありません。希望の上をドラッグして引いてください';
+      if(draftCount>0) toast += `（案${draftCount}件は未確定のまま）`;
+      showToast(toast, notified>0?'success':'', 6000);
+    } else {
+      // Multi-day: save dragged (manual) shifts for all dates（通知なし）
+      for(const d of dates) {
+        await saveShiftsToDb(dk(d), true);
+      }
+      showToast('✓ 確定シフト（ドラッグ分）を保存しました', 'success', 6000);
     }
-    // 下書き（案）が残っていれば知らせる
-    const draftCount = getStaff().reduce((n,s)=>n+getShifts(s.id,dkey).filter(sh=>!isManual(sh)).length,0);
-    let toast = notified>0
-      ? `確定シフトを反映し、${notified}名に通知しました ✓`
-      : 'ドラッグで引いた確定シフトがありません。希望の上をドラッグして引いてください';
-    if(draftCount>0) toast += `（案${draftCount}件は未確定のまま）`;
-    showToast(toast, notified>0?'success':'');
-  } else {
-    // Multi-day: save dragged (manual) shifts for all dates（通知なし）
-    for(const d of dates) {
-      await saveShiftsToDb(dk(d), true);
-    }
-    showToast('確定シフト（ドラッグ分）を保存しました ✓', 'success');
+  } catch(e) {
+    console.error('confirmShiftWithNotify error:', e);
+    const detail = (e && e.message) ? String(e.message).slice(0,140) : '不明なエラー';
+    showToast('確定に失敗しました：' + detail, 'error', 0);
   }
 }
 
