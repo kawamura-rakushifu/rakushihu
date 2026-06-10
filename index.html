@@ -239,7 +239,7 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
 /* ========== MODAL ========== */
 .modal-overlay{position:fixed;inset:0;background:transparent;z-index:100;opacity:0;pointer-events:none;transition:opacity .15s}
 .modal-overlay.show{opacity:1;pointer-events:all}
-.modal{position:fixed;background:#fff;border-radius:var(--radius-lg);padding:22px;width:300px;box-shadow:0 8px 32px rgba(0,0,0,.18),0 0 0 1px rgba(0,0,0,.06);transform:scale(.96) translateY(4px);transition:transform .15s,opacity .15s;opacity:0}
+.modal{position:fixed;background:#fff;border-radius:var(--radius-lg);padding:22px;width:300px;max-height:88vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.18),0 0 0 1px rgba(0,0,0,.06);transform:scale(.96) translateY(4px);transition:transform .15s,opacity .15s;opacity:0}
 .modal-overlay.show .modal{transform:scale(1) translateY(0);opacity:1}
 .modal-title{font-size:14px;font-weight:700;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center}
 .modal-close{background:none;border:none;cursor:pointer;font-size:18px;color:var(--gray400)}
@@ -697,6 +697,13 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
     <div class="field" style="display:flex;align-items:center;gap:10px;padding:8px 0">
       <input type="checkbox" id="smCanMain" style="width:16px;height:16px;cursor:pointer;accent-color:var(--primary)">
       <label for="smCanMain" style="font-size:13px;font-weight:500;cursor:pointer">メイン担当が可能</label>
+    </div>
+    <div class="field">
+      <label class="field-label" style="display:flex;align-items:center;justify-content:space-between">
+        🗓 固定シフト（毎週）
+        <span style="font-size:10px;color:var(--gray400);font-weight:400">チェックした曜日を自動作成で反映</span>
+      </label>
+      <div id="smFixedShifts" style="border:1px solid var(--gray100);border-radius:8px;padding:6px 10px"></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-sm btn-danger" id="smDeleteBtn" onclick="deleteStaff()">削除</button>
@@ -1897,6 +1904,24 @@ function autoFill(){
     const dkey=dk(d);
     const dow=d.getDay();
 
+    const patterns=shiftPatterns.length>0?shiftPatterns:[
+      {name:'開店',start:7*60,end:15*60},
+      {name:'中番',start:11*60,end:19*60},
+      {name:'閉店',start:15*60,end:23*60},
+    ];
+
+    // Step 0: 固定シフト（曜日ごと）を最優先で反映
+    staff.forEach(s=>{
+      if(getShifts(s.id,dkey).length>0) return;
+      const fx=fixedShifts[s.name+'_'+s.store];
+      const f=fx&&fx[dow];
+      if(f){
+        const sh={id:shiftIdCnt++,start:f.start,end:f.end,
+          pos:s.role,colorIdx:posColorMap[s.role]!==undefined?posColorMap[s.role]:0,note:'固定'};
+        setShifts(s.id,dkey,[sh]);
+      }
+    });
+
     // Step 1: Apply approved/pending requests first
     staff.forEach(s=>{
       if(getShifts(s.id,dkey).length>0) return; // already has shift
@@ -1911,12 +1936,15 @@ function autoFill(){
       }
     });
 
+    // Step 1.5: 社員を優先して必ず組み込む（ポジションが社員のスタッフを先に配置）
+    staff.filter(s=>s.role==='社員'&&getShifts(s.id,dkey).length===0).forEach((s,i)=>{
+      const pat=patterns[i%patterns.length];
+      const sh={id:shiftIdCnt++,start:pat.start,end:pat.end,
+        pos:s.role,colorIdx:posColorMap[s.role]!==undefined?posColorMap[s.role]:0,note:'社員'};
+      setShifts(s.id,dkey,[sh]);
+    });
+
     // Step 2: Fill remaining slots by position requirements
-    const patterns=shiftPatterns.length>0?shiftPatterns:[
-      {name:'開店',start:7*60,end:15*60},
-      {name:'中番',start:11*60,end:19*60},
-      {name:'閉店',start:15*60,end:23*60},
-    ];
 
     // Ensure at least 1 canMain staff is scheduled
     const mainStaff=staff.filter(s=>s.canMain);
@@ -2382,6 +2410,43 @@ function renderStaffMgmt(){
   </table>`;
 }
 
+// 固定シフト編集欄を組み立てる（key = name_store。新規時は空）
+let staffEditKey=null;
+function buildFixedShiftEditor(key){
+  const fx=(key&&fixedShifts[key])?fixedShifts[key]:{};
+  const inS='padding:5px 6px;border:1px solid var(--gray200);border-radius:6px;font-size:12px;font-family:var(--font);outline:none';
+  let html='';
+  for(let d=0;d<7;d++){
+    const f=fx[d]; const on=!!f;
+    const st=f?fmt(f.start):'09:00', en=f?fmt(f.end):'17:00';
+    const wk=(d===0||d===6);
+    html+=`<div style="display:flex;align-items:center;gap:6px;padding:3px 0">
+      <label style="display:flex;align-items:center;gap:6px;min-width:48px;font-size:12px;cursor:pointer">
+        <input type="checkbox" class="fx-on" data-d="${d}" ${on?'checked':''} style="width:15px;height:15px;accent-color:var(--primary)">
+        <span style="font-weight:600;color:${wk?'var(--red)':'var(--gray700)'}">${DAY_JP[d]}</span>
+      </label>
+      <input type="time" class="fx-start" data-d="${d}" value="${st}" style="${inS};flex:1">
+      <span style="font-size:11px;color:var(--gray400)">〜</span>
+      <input type="time" class="fx-end" data-d="${d}" value="${en}" style="${inS};flex:1">
+    </div>`;
+  }
+  const box=document.getElementById('smFixedShifts');
+  if(box) box.innerHTML=html;
+}
+// 編集欄から固定シフトのオブジェクトを読み取る（チェックされた曜日のみ）
+function readFixedShiftEditor(){
+  const map={};
+  document.querySelectorAll('#smFixedShifts .fx-on').forEach(cb=>{
+    if(!cb.checked) return;
+    const d=cb.dataset.d;
+    const st=document.querySelector(`#smFixedShifts .fx-start[data-d="${d}"]`).value;
+    const en=document.querySelector(`#smFixedShifts .fx-end[data-d="${d}"]`).value;
+    const sm=hm2m(st), em=hm2m(en);
+    if(em>sm) map[d]={start:sm,end:em};
+  });
+  return map;
+}
+
 function openStaffModal(sid){
   staffEditId=sid;
   const el=document.getElementById('staffModalOverlay');
@@ -2397,6 +2462,8 @@ function openStaffModal(sid){
   document.getElementById('smTarget').value=s?s.target||80:80;
   document.getElementById('smPass').value='';
   document.getElementById('smCanMain').checked=s?s.canMain||false:false;
+  staffEditKey = s ? (s.name+'_'+s.store) : null;
+  buildFixedShiftEditor(staffEditKey);
   document.getElementById('smDeleteBtn').style.display=sid?'inline-block':'none';
   el.classList.add('show');
 }
@@ -2406,6 +2473,7 @@ document.getElementById('staffModalOverlay').addEventListener('click',e=>{if(e.t
 function saveStaff(){
   const name=document.getElementById('smName').value.trim();
   if(!name){showToast('氏名を入力してください');return;}
+  const fxMap=readFixedShiftEditor();
   const pass=document.getElementById('smPass').value;
   if(staffEditId){
     const s=ALL_STAFF.find(x=>x.id===staffEditId);
@@ -2426,6 +2494,15 @@ function saveStaff(){
       canMain:document.getElementById('smCanMain').checked});
   }
   closeStaffModal();renderStaffMgmt();populateStaffSelect();render();
+  // 固定シフトを保存（曜日ごと）。氏名/店舗が変わったら旧キーから移動
+  const savedStaff = staffEditId ? ALL_STAFF.find(x=>x.id===staffEditId) : ALL_STAFF[ALL_STAFF.length-1];
+  if(savedStaff){
+    const newKey = savedStaff.name+'_'+savedStaff.store;
+    if(staffEditKey && staffEditKey!==newKey) delete fixedShifts[staffEditKey];
+    const map = fxMap;
+    if(Object.keys(map).length) fixedShifts[newKey]=map; else delete fixedShifts[newKey];
+    saveSettingToDb('fixedShifts', JSON.stringify(fixedShifts));
+  }
   // Save to Supabase
   syncStaffToDb().then(()=>{
     if(pass.length===4){
@@ -2454,6 +2531,8 @@ function deleteStaff(){
 
 // ============ SETTINGS ============
 let deadlines=[]; // [{month:'2026-07', dt:'2026-06-20T23:59'}]
+// 固定シフト（曜日ごと）: { 'name_store': { 0:{start,end}, 1:{...}, ... } }  0=日..6=土
+let fixedShifts={};
 let shiftPatterns=[
   {name:'開店',start:7*60,end:15*60},{name:'中番',start:11*60,end:19*60},
   {name:'閉店',start:15*60,end:23*60},{name:'フル',start:9*60,end:17*60},
@@ -2658,6 +2737,12 @@ async function loadSettingsFromDb(){
           const parsed = JSON.parse(r.value);
           if(Array.isArray(parsed)) deadlines = parsed;
         } catch(e){ console.error('deadlines parse error:', e); }
+      }
+      if(r.key==='fixedShifts'){
+        try {
+          const parsed = JSON.parse(r.value);
+          if(parsed && typeof parsed==='object') fixedShifts = parsed;
+        } catch(e){ console.error('fixedShifts parse error:', e); }
       }
     });
     populateStoreSelects();
@@ -3250,7 +3335,7 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0610-F（タップで編集修正）';
+  const BUILD_VER='ver 0610-G（固定シフト・社員優先）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   updateMobileButtons();
   // numpad built directly in HTML
