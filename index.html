@@ -559,10 +559,10 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
             <div style="font-size:13px;font-weight:700;margin-bottom:4px">⚙️ シフトパターン</div>
             <div style="font-size:11px;color:var(--gray400);margin-bottom:14px">よく使う時間帯をパターン登録できます</div>
             <div id="shiftPatternList" style="margin-bottom:12px"></div>
-            <div style="display:flex;gap:6px;margin-bottom:8px">
-              <input type="text" id="patternName" placeholder="名前 例：開店" style="flex:1;padding:6px 8px;border:1.5px solid var(--gray200);border-radius:var(--radius);font-size:11px;font-family:var(--font);outline:none">
-              <input type="time" id="patternStart" value="09:00" style="padding:6px 8px;border:1.5px solid var(--gray200);border-radius:var(--radius);font-size:11px;font-family:var(--font);outline:none;width:90px">
-              <input type="time" id="patternEnd" value="17:00" style="padding:6px 8px;border:1.5px solid var(--gray200);border-radius:var(--radius);font-size:11px;font-family:var(--font);outline:none;width:90px">
+            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+              <input type="text" id="patternName" placeholder="名前 例：開店" style="flex:1 1 100%;min-width:0;padding:6px 8px;border:1.5px solid var(--gray200);border-radius:var(--radius);font-size:11px;font-family:var(--font);outline:none">
+              <input type="time" id="patternStart" value="09:00" style="flex:1 1 0;min-width:0;padding:6px 8px;border:1.5px solid var(--gray200);border-radius:var(--radius);font-size:11px;font-family:var(--font);outline:none">
+              <input type="time" id="patternEnd" value="17:00" style="flex:1 1 0;min-width:0;padding:6px 8px;border:1.5px solid var(--gray200);border-radius:var(--radius);font-size:11px;font-family:var(--font);outline:none">
             </div>
             <button class="btn btn-primary" style="width:100%;font-size:11px" onclick="addPattern()">＋ パターン追加</button>
           </div>
@@ -2756,6 +2756,12 @@ async function loadSettingsFromDb(){
           if(parsed && typeof parsed==='object') fixedShifts = parsed;
         } catch(e){ console.error('fixedShifts parse error:', e); }
       }
+      if(r.key==='shiftPatterns'){
+        try {
+          const parsed = JSON.parse(r.value);
+          if(Array.isArray(parsed)) { shiftPatterns = parsed; renderPatternList(); }
+        } catch(e){ console.error('shiftPatterns parse error:', e); }
+      }
     });
     populateStoreSelects();
     // Update staff management tabs if visible
@@ -2834,7 +2840,9 @@ function addPattern(){
   if(end<=start){showToast('終了時間は開始時間より後にしてください');return;}
   shiftPatterns.push({name,start,end});
   document.getElementById('patternName').value='';
-  renderPatternList();showToast('パターンを追加しました');
+  renderPatternList();
+  saveSettingToDb('shiftPatterns', JSON.stringify(shiftPatterns));
+  showToast('パターンを追加しました ✓','success');
 }
 
 function renderPatternList(){
@@ -2846,7 +2854,7 @@ function renderPatternList(){
       <button class="del-btn" onclick="removePattern(${i})">✕</button>
     </div>`).join('');
 }
-function removePattern(i){shiftPatterns.splice(i,1);renderPatternList();}
+function removePattern(i){shiftPatterns.splice(i,1);renderPatternList();saveSettingToDb('shiftPatterns', JSON.stringify(shiftPatterns));}
 
 async function doAdminLogin(){
   // Fetch latest passcode from Supabase before checking
@@ -3347,7 +3355,7 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0610-I（スマホで自動作成）';
+  const BUILD_VER='ver 0610-J（シフトパターン入力修正・保存）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   updateMobileButtons();
   // numpad built directly in HTML
