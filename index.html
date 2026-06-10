@@ -248,7 +248,7 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
   .store-select{font-size:11px;padding:4px 6px}
   .top-actions{gap:4px}
   .btn{padding:4px 8px;font-size:11px}
-  .second-bar{padding:0 8px;gap:6px;height:auto;min-height:40px;flex-wrap:wrap}
+  .second-bar{padding:7px 8px;gap:6px;height:auto;min-height:40px;flex-wrap:wrap;row-gap:8px;align-content:center}
   .view-tabs .vtab{padding:3px 8px;font-size:11px}
   .date-label{font-size:11px;min-width:120px}
   .summary-chips{display:none}
@@ -398,7 +398,6 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
         <button class="vtab" onclick="setView('month',this)">月</button>
       </div>
       <button class="btn" id="fitBtn" onclick="toggleFit()" style="font-size:11px;padding:3px 10px" title="1日全体とスタッフ全員を画面内に収めて表示">⊞ 全体表示</button>
-      <button class="btn" id="addModeBtn" onclick="toggleAddMode()" style="font-size:11px;padding:3px 10px" title="ONの間だけ空き枠をドラッグしてシフトを追加できます（普段はOFFで閲覧/スクロール）">✏️ 追加</button>
       <div style="display:flex;align-items:center;gap:6px">
         <input id="staffSearch" class="staff-search" type="text" placeholder="スタッフ検索..." oninput="filterStaff(this.value)" style="width:120px;flex:none">
         <button id="groupToggleBtn" onclick="toggleGrouping()" title="グループ表示切替" style="flex-shrink:0;width:26px;height:26px;border-radius:5px;border:1px solid var(--primary);background:var(--primary-light);color:var(--primary);cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;transition:all .13s">☰</button>
