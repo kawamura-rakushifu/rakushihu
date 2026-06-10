@@ -319,6 +319,7 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
     <div class="login-card">
       <div class="login-logo">らくシフト</div>
       <div class="login-sub">シフト管理システム</div>
+      <div id="buildVer" style="text-align:center;font-size:10px;color:var(--gray400);margin-top:-2px;margin-bottom:6px"></div>
       <div class="login-tabs">
         <div class="login-tab active" onclick="switchLoginTab('admin',this)">管理者</div>
         <div class="login-tab" onclick="switchLoginTab('staff',this)">スタッフ</div>
@@ -3247,6 +3248,8 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
+  const BUILD_VER='ver 0610-E（確定エラー表示・確定通知）';
+  const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   updateMobileButtons();
   // numpad built directly in HTML
   populateStaffSelect();
