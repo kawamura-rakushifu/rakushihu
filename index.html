@@ -194,6 +194,18 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
 .cal-day.sun{color:var(--red)}
 .cal-day.sat{color:var(--primary)}
 .cal-day.today.sun,.cal-day.today.sat{color:#fff}
+/* スタッフ画面 表示モード切替トグル */
+.staff-mode-toggle{display:inline-flex;background:var(--gray100,#F3F4F6);border-radius:999px;padding:3px;gap:2px}
+.staff-mode-toggle button{border:none;background:transparent;padding:6px 14px;border-radius:999px;font-size:12px;font-weight:600;color:var(--gray500);cursor:pointer;font-family:var(--font);transition:all .12s}
+.staff-mode-toggle button.active{background:#fff;color:var(--primary);box-shadow:0 1px 3px rgba(0,0,0,.1)}
+/* 確定シフトのカレンダー表示 */
+.cal-day.has-shift{border-color:var(--primary)}
+.cal-day.has-shift .cal-shift-mini{font-size:8px;line-height:1.1;font-weight:700;margin-top:1px;padding:0 3px;border-radius:4px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.confirmed-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;margin-bottom:6px;background:var(--gray50,#F9FAFB);border:1px solid var(--gray100,#F3F4F6)}
+.confirmed-item .ci-date{font-size:12px;font-weight:700;min-width:62px}
+.confirmed-item .ci-time{font-size:11px;font-weight:600}
+.confirmed-item .ci-pos{font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;margin-left:auto}
+@media(max-width:760px){.cal-day.has-shift .cal-shift-mini{font-size:9px}}
 
 /* Request form */
 .req-form-card{background:#fff;border-radius:var(--radius-lg);border:1px solid var(--gray200);padding:16px;flex:1;min-width:280px}
@@ -553,7 +565,7 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
     <span class="badge" style="background:#F0FDF4;color:var(--green)">スタッフ</span>
     <div class="staff-name-badge" id="staffNameBadge"></div>
     <div style="margin-left:auto;display:flex;gap:8px">
-      <button class="btn btn-primary btn-sm" onclick="submitRequests()">希望を提出する</button>
+      <button id="staffSubmitBtn" class="btn btn-primary btn-sm" onclick="submitRequests()">希望を提出する</button>
       <button class="btn btn-red btn-sm" onclick="logout()">ログアウト</button>
     </div>
   </div>
@@ -563,7 +575,11 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
       <div class="date-label" id="staffMonthLabel"></div>
       <button class="nav-btn" onclick="staffNavMonth(1)">›</button>
     </div>
-    <div style="font-size:11px;color:var(--gray400);margin-left:8px">カレンダーの日付をクリックして希望を追加</div>
+    <div class="staff-mode-toggle" style="margin-left:10px">
+      <button id="modeBtnRequest" class="active" onclick="setStaffViewMode('request')">📝 希望提出</button>
+      <button id="modeBtnConfirmed" onclick="setStaffViewMode('confirmed')">📅 確定シフト</button>
+    </div>
+    <div id="staffCalHint" style="font-size:11px;color:var(--gray400);margin-left:8px">カレンダーの日付をクリックして希望を追加</div>
     <div style="margin-left:auto;font-size:11px;color:var(--gray500)" id="staffReqCount"></div>
   </div>
   <div class="staff-content">
@@ -576,6 +592,7 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
         <div class="cal-grid" id="calGrid"></div>
       </div>
       <div id="staffRightPanel" style="display:flex;flex-direction:column;gap:12px;flex:1;min-width:260px">
+        <div id="requestModePanels" style="display:flex;flex-direction:column;gap:12px">
         <div class="req-form-card" id="reqFormCard" style="display:none">
           <div class="req-form-title">📅 <span id="reqFormDate"></span> の希望を入力</div>
           <div class="field">
@@ -610,6 +627,13 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
             提出済み希望 <span id="reqSubmitBadge" style="font-size:10px;color:var(--gray400)"></span>
           </div>
           <div id="myReqList"></div>
+        </div>
+        </div>
+        <div id="confirmedModePanel" class="req-list-card" style="display:none">
+          <div style="font-size:13px;font-weight:700;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
+            ✅ 確定シフト一覧 <span id="confirmedCount" style="font-size:10px;color:var(--gray400)"></span>
+          </div>
+          <div id="myConfirmedList"></div>
         </div>
       </div>
     </div>
@@ -779,6 +803,9 @@ function setBreaks(sid,d,a){breakData[`${sid}_${d}`]=a}
 function calcBreakH(sid,d){return getBreaks(sid,d).reduce((s,b)=>s+(b.end-b.start)/60,0)}
 
 function getRequests(sid,d){return requestData[`${sid}_${d}`]||[]}
+// ===== スタッフ画面 表示モード（希望提出 / 確定シフト）=====
+let staffViewMode='request';          // 'request' | 'confirmed'
+let myConfirmedShifts={};             // dkey -> [{start,end,pos,colorIdx,note}]
 function setRequests(sid,d,a){requestData[`${sid}_${d}`]=a}
 
 // ============ STATE ============
@@ -859,6 +886,7 @@ async function doStaffLogin(){
   currentStaffId=sid;
   document.getElementById('staffNameBadge').textContent=s.name;
   showScreen('staffScreen');
+  setStaffViewMode('request');
   renderStaffScreen();
   // Check for notifications from DB
   syncStaffToDb().then(()=>{
@@ -1960,13 +1988,101 @@ function renderStaffScreen(){
   renderCalendar();
   renderMyReqList();
   updateStaffReqCount();
+  if(staffViewMode==='confirmed'){
+    loadMyConfirmedShifts().then(()=>{ renderCalendar(); renderConfirmedList(); });
+  }
 }
 
 function staffNavMonth(d){
   staffMonthDate.setMonth(staffMonthDate.getMonth()+d);
   selectedCalDay=null;
   document.getElementById('reqFormCard').style.display='none';
-  renderCalendar();
+  if(staffViewMode==='confirmed'){
+    loadMyConfirmedShifts().then(()=>{ renderCalendar(); renderConfirmedList(); });
+  } else {
+    renderCalendar();
+  }
+}
+
+// ===== 表示モード切替（希望提出 / 確定シフト）=====
+function setStaffViewMode(mode){
+  staffViewMode=mode;
+  const isReq=mode==='request';
+  document.getElementById('modeBtnRequest').classList.toggle('active',isReq);
+  document.getElementById('modeBtnConfirmed').classList.toggle('active',!isReq);
+  document.getElementById('requestModePanels').style.display=isReq?'flex':'none';
+  document.getElementById('confirmedModePanel').style.display=isReq?'none':'block';
+  const submitBtn=document.getElementById('staffSubmitBtn');
+  if(submitBtn) submitBtn.style.display=isReq?'':'none';
+  const hint=document.getElementById('staffCalHint');
+  if(hint) hint.textContent=isReq?'カレンダーの日付をクリックして希望を追加':'確定済みのシフトを表示しています';
+  // 希望入力フォームは確定モードでは閉じる
+  if(!isReq){ selectedCalDay=null; document.getElementById('reqFormCard').style.display='none'; }
+  if(isReq){
+    renderCalendar();
+  } else {
+    document.getElementById('myConfirmedList').innerHTML='<div style="color:var(--gray400);font-size:12px;text-align:center;padding:16px">読み込み中...</div>';
+    loadMyConfirmedShifts().then(()=>{ renderCalendar(); renderConfirmedList(); });
+  }
+}
+
+// ログイン中スタッフの、表示中の月の確定シフトをDBから読み込む
+async function loadMyConfirmedShifts(){
+  myConfirmedShifts={};
+  if(currentStaffDbId==null) return false;
+  const y=staffMonthDate.getFullYear(), mo=staffMonthDate.getMonth();
+  const daysInMonth=new Date(y,mo+1,0).getDate();
+  const mm=String(mo+1).padStart(2,'0');
+  const start=`${y}-${mm}-01`;
+  const end=`${y}-${mm}-${String(daysInMonth).padStart(2,'0')}`;
+  try{
+    const rows=await sbFetch('shifts?staff_id=eq.'+currentStaffDbId+'&date=gte.'+start+'&date=lte.'+end+'&select=*&order=date,start_min');
+    (rows||[]).forEach(r=>{
+      (myConfirmedShifts[r.date]=myConfirmedShifts[r.date]||[]).push({
+        start:r.start_min, end:r.end_min,
+        pos:r.position||'', colorIdx:r.color_idx||0, note:r.note||''
+      });
+    });
+    return true;
+  }catch(e){
+    console.log('loadMyConfirmedShifts error:', e&&e.message?e.message:e);
+    return false;
+  }
+}
+
+// 確定シフトの一覧（右パネル）を描画
+function renderConfirmedList(){
+  const el=document.getElementById('myConfirmedList');
+  const cntEl=document.getElementById('confirmedCount');
+  if(!el) return;
+  const keys=Object.keys(myConfirmedShifts).sort();
+  let total=0; keys.forEach(k=>total+=myConfirmedShifts[k].length);
+  if(cntEl) cntEl.textContent=total+'件';
+  if(!total){
+    el.innerHTML='<div style="color:var(--gray400);font-size:12px;text-align:center;padding:20px">この月の確定シフトはまだありません</div>';
+    return;
+  }
+  let html='';
+  keys.forEach(dkey=>{
+    const d=new Date(dkey);
+    myConfirmedShifts[dkey].forEach(sh=>{
+      const c=COLORS_LIST[sh.colorIdx||0]||COLORS_LIST[0];
+      html+=`<div class="confirmed-item">
+        <div class="ci-date">${d.getMonth()+1}/${d.getDate()}（${DAY_JP[d.getDay()]}）</div>
+        <div class="ci-time">${fmt(sh.start)}〜${fmt(sh.end)}</div>
+        ${sh.pos?`<div class="ci-pos" style="background:${c.bg};color:${c.fg}">${sh.pos}</div>`:''}
+      </div>${sh.note?`<div style="font-size:10px;color:var(--gray500);margin:-3px 0 8px 10px">📝 ${sh.note}</div>`:''}`;
+    });
+  });
+  el.innerHTML=html;
+}
+
+// 確定シフトの日付タップ時：その日の詳細をトースト表示
+function showConfirmedDetail(dkey,label){
+  const arr=myConfirmedShifts[dkey]||[];
+  if(!arr.length){ showToast(label+'：確定シフトはありません'); return; }
+  const txt=arr.map(sh=>`${fmt(sh.start)}〜${fmt(sh.end)}${sh.pos?' '+sh.pos:''}`).join(' / ');
+  showToast(`${label}　${txt}`,'success');
 }
 
 // スタッフ画面に、表示中の月の希望提出締め切りを表示
@@ -2013,8 +2129,10 @@ function renderCalendar(){
     const isPast=d<today;
     const isToday=d.getTime()===today.getTime();
     const dow=d.getDay();
-    const hasR=s&&getRequests(s,dkey).length>0;
-    const isSel=selectedCalDay===dkey;
+    const confirmedMode=staffViewMode==='confirmed';
+    const shiftsToday=confirmedMode?(myConfirmedShifts[dkey]||[]):[];
+    const hasR=!confirmedMode && s && getRequests(s,dkey).length>0;
+    const isSel=!confirmedMode && selectedCalDay===dkey;
     let cls='cal-day';
     if(isPast) cls+=' past';
     else if(isToday) cls+=' today';
@@ -2022,7 +2140,20 @@ function renderCalendar(){
     if(dow===6) cls+=' sat';
     if(hasR) cls+=' has-req';
     if(isSel) cls+=' selected';
-    html+=`<div class="${cls}" onclick="selectCalDay('${dkey}','${y}年${mo+1}月${day}日（${['日','月','火','水','木','金','土'][dow]}）')">${day}</div>`;
+    if(confirmedMode && shiftsToday.length) cls+=' has-shift';
+    const label=`${y}年${mo+1}月${day}日（${['日','月','火','水','木','金','土'][dow]}）`;
+    if(confirmedMode){
+      let inner=`${day}`;
+      if(shiftsToday.length){
+        const sh=shiftsToday[0];
+        const c=COLORS_LIST[sh.colorIdx||0]||COLORS_LIST[0];
+        const more=shiftsToday.length>1?'+':'';
+        inner+=`<span class="cal-shift-mini" style="background:${c.bg};color:${c.fg}">${fmt(sh.start)}${more}</span>`;
+      }
+      html+=`<div class="${cls}" onclick="showConfirmedDetail('${dkey}','${label}')">${inner}</div>`;
+    } else {
+      html+=`<div class="${cls}" onclick="selectCalDay('${dkey}','${label}')">${day}</div>`;
+    }
   }
   document.getElementById('calGrid').innerHTML=html;
 }
