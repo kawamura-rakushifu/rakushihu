@@ -2259,12 +2259,17 @@ function cancelReqForm(){
   renderCalendar();
 }
 
+// その日付(またはYYYY-MM)の月が締め切り済みなら true
+function isReqLocked(dkeyOrMonth){
+  const monthKey=(dkeyOrMonth||'').substring(0,7);
+  const dl=deadlines.find(d=>d.month===monthKey);
+  return !!(dl && new Date(dl.dt) < new Date());
+}
+
 function addRequest(){
   if(!selectedCalDay||!currentStaffId) return;
   // Deadline check
-  const monthKey=selectedCalDay.substring(0,7);
-  const dl=deadlines.find(d=>d.month===monthKey);
-  if(dl&&new Date(dl.dt)<new Date()){showToast('この月の希望提出は締め切られています');return;}
+  if(isReqLocked(selectedCalDay)){showToast('この月の希望提出は締め切られています');return;}
   const start=+document.getElementById('reqStart').value;
   const end=+document.getElementById('reqEnd').value;
   if(end<=start){showToast('終了時間は開始時間より後にしてください');return;}
@@ -2346,13 +2351,16 @@ function renderMyReqList(){
       <div class="my-req-date">${d.getMonth()+1}/${d.getDate()}（${DAY_JP[d.getDay()]}）</div>
       <div class="my-req-time">${fmt(r.start)}〜${fmt(r.end)}${r.pos?' '+r.pos:''}</div>
       <span class="req-status ${r.status}" style="font-size:10px;padding:2px 6px;border-radius:10px;font-weight:600;background:${r.status==='pending'?'var(--amber-light)':'var(--green-light)'};color:${r.status==='pending'?'var(--amber)':'var(--green)'}">${r.status==='pending'?'未確認':'承認済'}</span>
-      ${r.status==='pending'?`<button class="del-btn" onclick="deleteMyReq('${r.dkey}',${r.id})">✕</button>`:''}
+      ${r.status==='pending' ? (isReqLocked(r.dkey)
+          ? `<span title="締め切り済み" style="font-size:11px;color:var(--gray400)">🔒</span>`
+          : `<button class="del-btn" onclick="deleteMyReq('${r.dkey}',${r.id})">✕</button>`) : ''}
     </div>`;
   }).join('');
 }
 
 function deleteMyReq(dkey,rid){
   if(!currentStaffId) return;
+  if(isReqLocked(dkey)){showToast('この月の希望提出は締め切られています');return;}
   const arr=getRequests(currentStaffId,dkey).filter(r=>r.id!==rid);
   setRequests(currentStaffId,dkey,arr);
   renderMyReqList();renderCalendar();updateStaffReqCount();showToast('削除しました');
@@ -3335,7 +3343,7 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0610-G（固定シフト・社員優先）';
+  const BUILD_VER='ver 0610-H（締切後は削除も不可）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   updateMobileButtons();
   // numpad built directly in HTML
