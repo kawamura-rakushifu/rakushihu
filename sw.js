@@ -1,60 +1,49 @@
-// Service Worker for らくシフト Push Notifications
-// プロジェクトページ (/rakushihu/) 配下で動作するため、パスは相対指定にしています。
+// らくシフト Service Worker
+// 重要: HTML/アセットをキャッシュしない方針にして、常に最新版を読み込む。
+// (以前のSWが index.html をキャッシュしていたため、更新が反映されない問題があった)
+const SW_VERSION = 'v4-nocache-2026-06-10';
 
-const APP_SCOPE = self.registration ? self.registration.scope : './';
+self.addEventListener('install', (e) => {
+  self.skipWaiting();
+});
 
-// ---- プッシュ受信 ----
-self.addEventListener('push', function(event) {
-  let data = {};
-  try {
-    data = event.data ? event.data.json() : {};
-  } catch (e) {
-    // JSON でない場合はテキストとして扱う
-    data = { body: event.data ? event.data.text() : '' };
-  }
+self.addEventListener('activate', (e) => {
+  e.waitUntil((async () => {
+    // 古いキャッシュを全部削除
+    const keys = await caches.keys();
+    await Promise.all(keys.map((k) => caches.delete(k)));
+    await self.clients.claim();
+  })());
+});
 
-  const title = data.title || 'らくシフト';
+// fetchハンドラは設置しない = ブラウザが毎回ネットワークから取得（古い表示が残らない）
+
+self.addEventListener('push', (e) => {
+  let payload = {};
+  try { payload = e.data ? e.data.json() : {}; }
+  catch (_) { try { payload = { body: e.data.text() }; } catch (__) {} }
+  const title = payload.title || 'らくシフト';
+  const body = payload.body || payload.message || '新しいお知らせがあります';
   const options = {
-    body: data.body || 'シフトが更新されました',
-    badge: data.badge,                 // 無ければ undefined（既定アイコン）
-    icon: data.icon,                   // 無ければ undefined（既定アイコン）
-    tag: data.tag || 'rakushifu',      // 同じ tag は上書き表示
-    renotify: true,
-    requireInteraction: !!data.requireInteraction,
-    data: { url: data.url || APP_SCOPE },
-    actions: [{ action: 'view', title: '確認する' }]
+    body,
+    icon: 'icon-192.png',
+    badge: 'icon-192.png',
+    data: { url: payload.url || './' },
+    vibrate: [80, 40, 80],
   };
-
-  event.waitUntil(self.registration.showNotification(title, options));
+  e.waitUntil(self.registration.showNotification(title, options));
 });
 
-// ---- 通知クリック ----
-self.addEventListener('notificationclick', function(event) {
-  event.notification.close();
-  const targetUrl = (event.notification.data && event.notification.data.url) || APP_SCOPE;
-
-  event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
-      // 既に開いているタブがあればフォーカス
-      for (const client of clientList) {
-        if ('focus' in client) {
-          client.focus();
-          if ('navigate' in client) { try { client.navigate(targetUrl); } catch (e) {} }
-          return;
-        }
-      }
-      // 無ければ新規に開く
-      if (clients.openWindow) return clients.openWindow(targetUrl);
-    })
-  );
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || './';
+  e.waitUntil((async () => {
+    const all = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of all) {
+      if (c.url.includes('rakushihu') && 'focus' in c) return c.focus();
+    }
+    if (clients.openWindow) return clients.openWindow(url);
+  })());
 });
 
-// ---- 購読が失効した場合の自動再購読（任意・ベストエフォート） ----
-self.addEventListener('pushsubscriptionchange', function(event) {
-  // 再購読は VAPID 公開鍵が必要なため、ここではログのみ。
-  // クライアント側 registerPush() が次回ログイン時に再登録します。
-  console.log('[sw] pushsubscriptionchange');
-});
-
-self.addEventListener('install', e => self.skipWaiting());
-self.addEventListener('activate', e => e.waitUntil(clients.claim()));
+self.addEventListener('pushsubscriptionchange', () => {});
