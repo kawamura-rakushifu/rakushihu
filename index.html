@@ -482,6 +482,16 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
             <button class="btn btn-primary" style="width:100%" onclick="saveDeadline()">締め切りを設定する</button>
             <div id="deadlineList" style="margin-top:14px"></div>
           </div>
+          <!-- Push notification test -->
+          <div style="background:#fff;border-radius:var(--radius-lg);border:1px solid var(--gray200);padding:20px">
+            <div style="font-size:13px;font-weight:700;margin-bottom:4px">🔔 プッシュ通知テスト</div>
+            <div style="font-size:11px;color:var(--gray400);margin-bottom:12px">通知を許可済みのスタッフへテスト通知を送って動作確認できます</div>
+            <button class="btn" style="width:100%;margin-bottom:10px" onclick="refreshPushStatus()">登録状況を確認 / 更新</button>
+            <div id="pushStatus" style="font-size:11px;color:var(--gray500);margin-bottom:10px;line-height:1.5">「確認」を押すと、通知を許可済みのスタッフが表示されます</div>
+            <select id="testPushTarget" class="login-select" style="width:100%;margin-bottom:10px;display:none"></select>
+            <button class="btn btn-primary" style="width:100%" onclick="sendTestPush()">テスト通知を送る</button>
+            <div id="testPushResult" style="font-size:11px;margin-top:10px;line-height:1.5"></div>
+          </div>
           <!-- Store settings -->
           <div style="background:#fff;border-radius:var(--radius-lg);border:1px solid var(--gray200);padding:20px">
             <div style="font-size:13px;font-weight:700;margin-bottom:4px">🏪 店舗設定</div>
@@ -856,6 +866,8 @@ async function doStaffLogin(){
       checkNotifications(dbId);
       registerPush(dbId);
     }
+    // 提出済みの希望をDBから読み込んで自分のカレンダーに反映
+    loadRequestsFromDb().then(()=>renderStaffScreen());
   });
 }
 
@@ -911,7 +923,8 @@ function switchAdminTab(tab,el){
   const fab=document.getElementById('addFab');
   if(fab) fab.style.display=tab==='timeline'?'flex':'none';
   if(tab!=='timeline' && addMode) toggleAddMode(); // 別タブに移ったら追加モード解除
-  if(tab==='requests') renderRequestPanel();
+  if(tab==='timeline') loadRequestsFromDb().then(()=>render());
+  if(tab==='requests') loadRequestsFromDb().then(()=>renderRequestPanel());
   if(tab==='staff'){staffMgmtStore=currentStore;renderStaffMgmt();}
   if(tab==='settings') renderSettings();
 }
@@ -2071,8 +2084,53 @@ function addRequest(){
   showToast('希望を追加しました ✓','success');
 }
 
-function submitRequests(){
-  showToast('希望を提出しました！管理者に通知されます ✓','success');
+async function submitRequests(){
+  if(currentStaffDbId==null){ showToast('提出にはログインが必要です'); return; }
+  showToast('提出中...');
+  try{
+    // このスタッフの既存希望を一旦削除して、現在の内容で入れ直す
+    await sbFetch('requests?staff_id=eq.'+currentStaffDbId, 'DELETE');
+    const rows=[];
+    Object.keys(requestData).forEach(key=>{
+      const idx=key.indexOf('_');
+      const sid=+key.slice(0,idx);
+      const date=key.slice(idx+1);
+      if(sid===currentStaffId){
+        requestData[key].forEach(r=>rows.push({
+          staff_id: currentStaffDbId, date: date, start_min: r.start, end_min: r.end,
+          pos: r.pos||'ホール', note: r.note||'', status: 'pending'
+        }));
+      }
+    });
+    if(rows.length) await sbFetch('requests','POST',rows);
+    showToast('希望を提出しました！管理者に反映されます ✓','success');
+  }catch(e){
+    console.error('submitRequests error:', e);
+    showToast('提出に失敗しました（希望テーブル未作成の可能性）','error');
+  }
+}
+
+// 希望をDBから読み込み、requestData を再構築（管理者・スタッフ共通）
+async function loadRequestsFromDb(){
+  try{
+    const rows = await sbFetch('requests?select=*&order=date');
+    const d2l={};
+    ALL_STAFF.forEach(s=>{ if(s.dbId!=null) d2l[s.dbId]=s.id; });
+    const fresh={};
+    (rows||[]).forEach(r=>{
+      const localId = (d2l[r.staff_id]!==undefined) ? d2l[r.staff_id] : (900+r.staff_id);
+      const key = localId+'_'+r.date;
+      (fresh[key]=fresh[key]||[]).push({
+        id: r.id, start: r.start_min, end: r.end_min,
+        pos: r.pos||'ホール', note: r.note||'', status: r.status||'pending'
+      });
+    });
+    requestData = fresh; // DBを正とする
+    return true;
+  }catch(e){
+    console.log('loadRequests error (希望テーブル未作成?):', e&&e.message?e.message:e);
+    return false;
+  }
 }
 
 function renderMyReqList(){
@@ -2537,6 +2595,7 @@ async function doAdminLogin(){
   loadSettingsFromDb().then(async ()=>{
     await loadStaffFromDb();
     await upsertAllStaffToDb();
+    await loadRequestsFromDb();   // 提出された希望を読み込む
     render();
     // 締め切り間近の月があれば自動でリマインド送信（重複なし）
     checkDeadlineReminders();
@@ -2740,6 +2799,50 @@ async function sendPushToStaff(staffDbId, message, title, url) {
   }
 }
 
+// ===== プッシュ通知テスト（設定画面） =====
+async function refreshPushStatus(){
+  const statusEl=document.getElementById('pushStatus');
+  const sel=document.getElementById('testPushTarget');
+  if(!statusEl||!sel) return;
+  statusEl.textContent='確認中...';
+  try{
+    const rows=await sbFetch('staff?select=id,name,store,push_subscription&order=store,name');
+    const reg=(rows||[]).filter(r=>r.push_subscription);
+    if(!reg.length){
+      statusEl.innerHTML='通知を許可済みのスタッフは <b>0人</b> です。<br>スタッフ端末で（ホーム画面に追加した）アプリを開き、ログイン→通知を「許可」してください。';
+      sel.style.display='none';
+      return;
+    }
+    statusEl.innerHTML='通知を許可済み：<b>'+reg.length+'人</b>。下の送信先を選んでテスト送信できます。';
+    sel.style.display='block';
+    sel.innerHTML=reg.map(r=>`<option value="${r.id}">${getStoreName(r.store)} - ${r.name}</option>`).join('');
+  }catch(e){
+    statusEl.textContent='確認に失敗しました: '+(e&&e.message?e.message:e);
+  }
+}
+
+async function sendTestPush(){
+  const sel=document.getElementById('testPushTarget');
+  const resEl=document.getElementById('testPushResult');
+  if(!resEl) return;
+  if(!sel || sel.style.display==='none' || !sel.value){
+    resEl.style.color='var(--red)';
+    resEl.textContent='先に「登録状況を確認 / 更新」を押して、送信先のスタッフを選んでください。';
+    return;
+  }
+  const id=+sel.value;
+  resEl.style.color='var(--gray500)';
+  resEl.textContent='送信中...';
+  const ok=await sendPushToStaff(id, 'これはテスト通知です 🔔 これが届けばプッシュ通知は正常です。', 'テスト通知');
+  if(ok){
+    resEl.style.color='var(--green)';
+    resEl.textContent='✓ 送信しました。送信先の端末に通知が届くか確認してください。';
+  }else{
+    resEl.style.color='var(--red)';
+    resEl.textContent='送信できませんでした。購読失効か関数エラーの可能性があります（Supabaseの Functions → Logs を確認）。';
+  }
+}
+
 // ============ SUPABASE DATA SYNC ============
 let staffDbMap = {}; // name -> db id mapping
 
@@ -2825,6 +2928,7 @@ async function loadStaffFromDb(){
       const local=ALL_STAFF.find(s=>s.name===dbS.name&&s.store===dbS.store);
       if(local){
         // Update existing staff
+        local.dbId=dbS.id;
         if(dbS.passcode) local.passcode=dbS.passcode;
         if(dbS.role) local.role=dbS.role;
         if(dbS.emp_type) local.empType=dbS.emp_type;
@@ -2833,7 +2937,7 @@ async function loadStaffFromDb(){
       } else {
         // Add new staff from DB
         ALL_STAFF.push({
-          id: 900+dbS.id, store: dbS.store, name: dbS.name,
+          id: 900+dbS.id, dbId: dbS.id, store: dbS.store, name: dbS.name,
           role: dbS.role||'ホール', empType: dbS.emp_type||'アルバイト',
           target: dbS.target_hours||80, passcode: dbS.passcode||'1234',
           canMain: dbS.can_main||false
