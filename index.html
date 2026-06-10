@@ -124,6 +124,11 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
 .shift-bar{position:absolute;top:6px;height:36px;border-radius:6px;cursor:pointer;display:flex;align-items:center;padding:0 8px;font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;user-select:none;z-index:10;box-shadow:0 1px 3px rgba(0,0,0,.1);transition:filter .1s;pointer-events:auto}
 .shift-bar:hover{filter:brightness(.95)}
 .shift-bar.dragging{opacity:.85;z-index:30;box-shadow:0 4px 14px rgba(0,0,0,.2)}
+/* 下書き（自動作成・承認など、ドラッグで引いていない＝未確定）のシフト */
+.shift-bar.draft{opacity:.5;box-shadow:none;border-style:dashed !important;border-width:2px !important}
+.shift-bar.draft .shift-flag{opacity:.8}
+/* 確定（ドラッグで引いた／確定チェック）の目印 */
+.shift-flag{font-size:9px;font-weight:800;margin-right:3px;flex-shrink:0;pointer-events:none}
 .resize-handle{position:absolute;top:0;bottom:0;width:8px;cursor:ew-resize;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .15s}
 .shift-bar:hover .resize-handle{opacity:1}
 .resize-left{left:0;border-radius:6px 0 0 6px}
@@ -739,6 +744,13 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
       <div class="color-picker" id="colorPicker"></div>
     </div>
     <div class="field"><label class="field-label">メモ</label><input type="text" id="modalNote" placeholder="例：早退あり"></div>
+    <div class="field" style="margin-top:4px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--gray700);cursor:pointer">
+        <input type="checkbox" id="modalManual" style="width:16px;height:16px;cursor:pointer">
+        ✅ 確定（スタッフに通知対象）にする
+      </label>
+      <div style="font-size:10px;color:var(--gray400);margin-top:3px;margin-left:24px">チェックを外すと「案（下書き）」になり、確定・通知の対象外になります</div>
+    </div>
     <div class="modal-footer">
       <button class="btn btn-sm btn-danger" onclick="deleteShiftModal()">削除</button>
       <button class="btn btn-sm" onclick="closeModal()">キャンセル</button>
@@ -1108,14 +1120,19 @@ function renderBar(sh, sid, dkey, top, left, width, isMulti){
   const c = COLORS_LIST[sh.colorIdx] || COLORS_LIST[0];
   const t = top + BAR_TOP;
   const label = (sh.pos||'') + ' ' + fmt(sh.start) + '-' + fmt(sh.end);
+  const isConfirmed = !!sh.manual;
+  const cls = 'shift-bar' + (isConfirmed ? '' : ' draft');
+  const flag = isConfirmed
+    ? `<span class="shift-flag" title="ドラッグで引いた確定シフト">✓</span>`
+    : `<span class="shift-flag" title="未確定（下書き）。確定するにはドラッグで引き直すか、開いて「確定」にチェック">案</span>`;
   const handles = isMulti ? '' :
     `<div class="resize-handle resize-left" onmousedown="handleResizeMousedown(event,'left',${sid},'${dkey}',${sh.id})"></div>` +
     `<div class="resize-handle resize-right" onmousedown="handleResizeMousedown(event,'right',${sid},'${dkey}',${sh.id})"></div>`;
-  return `<div class="shift-bar" data-sid="${sid}" data-dk="${dkey}" data-shid="${sh.id}" ` +
+  return `<div class="${cls}" data-sid="${sid}" data-dk="${dkey}" data-shid="${sh.id}" ` +
     `style="left:${left}px;width:${width}px;top:${t}px;height:${BAR_H}px;background:${c.bg};color:${c.fg};border:1.5px solid ${c.fg}44;font-size:${isMulti?10:11}px" ` +
     `onmousedown="handleBarMousedown(event,${sid},'${dkey}',${sh.id})" onclick="openModal(${sid},'${dkey}',${sh.id},event)">` +
     handles +
-    `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;pointer-events:none">${label}</span>` +
+    `${flag}<span style="flex:1;overflow:hidden;text-overflow:ellipsis;pointer-events:none">${label}</span>` +
   `</div>`;
 }
 
@@ -1480,12 +1497,12 @@ function onRowTouchStart(e, sid){
     const staffPos = staffObj ? staffObj.role : 'ホール';
     const shId = shiftIdCnt++;
     const sh = {id:shId, start:Math.max(T_START*60,s), end:Math.min(T_END*60,en),
-      pos:staffPos, colorIdx:posColorMap[staffPos]!==undefined?posColorMap[staffPos]:0, note:''};
+      pos:staffPos, colorIdx:posColorMap[staffPos]!==undefined?posColorMap[staffPos]:0, note:'', manual:true};
     const arr = getShifts(sid, dkey);
     arr.push(sh);
     setShifts(sid, dkey, arr);
     renderLeft(); renderSummary(); render();   // renderBar が正しい位置で再描画する
-    showToast('シフトを追加しました');
+    showToast('確定シフトを引きました ✓');
   }
 
   row.addEventListener('touchmove', touchMove, {passive:false});
@@ -1577,7 +1594,7 @@ function onRowMD(e, sid){
       const staffObj=ALL_STAFF.find(x=>x.id===sid);
       const staffPos=staffObj?staffObj.role:'ホール';
       const shId=shiftIdCnt++;
-      const sh={id:shId,start:Math.max(T_START*60,s),end:Math.min(T_END*60,en),pos:staffPos,colorIdx:posColorMap[staffPos]!==undefined?posColorMap[staffPos]:0,note:''};
+      const sh={id:shId,start:Math.max(T_START*60,s),end:Math.min(T_END*60,en),pos:staffPos,colorIdx:posColorMap[staffPos]!==undefined?posColorMap[staffPos]:0,note:'',manual:true};
       const arr=getShifts(sid,dkey);
       arr.push(sh);
       setShifts(sid,dkey,arr);
@@ -1599,7 +1616,7 @@ function onRowMD(e, sid){
       renderLeft();renderSummary();
       // Update header counts
       render();
-      showToast('シフトを追加しました');
+      showToast('確定シフトを引きました ✓');
     }
   }
 
@@ -1731,11 +1748,11 @@ function onDE(e){
       setBreaks(dragState.sid,dragState.dkey,brArr);
       renderTimeline();renderLeft();renderSummary();showToast('☕ 休憩を追加しました');
     } else {
-      const sh={id:shiftIdCnt++,start:Math.max(T_START*60,s),end:Math.min(T_END*60,en),pos:'ホール',colorIdx:posColorMap['ホール']||0,note:''};
+      const sh={id:shiftIdCnt++,start:Math.max(T_START*60,s),end:Math.min(T_END*60,en),pos:'ホール',colorIdx:posColorMap['ホール']||0,note:'',manual:true};
       const shArr=getShifts(dragState.sid,dragState.dkey);
       shArr.push(sh);
       setShifts(dragState.sid,dragState.dkey,shArr);
-      renderTimeline();renderLeft();renderSummary();renderHeadcount();showToast('シフトを追加しました');
+      renderTimeline();renderLeft();renderSummary();renderHeadcount();showToast('確定シフトを引きました ✓');
     }
   } else if(type==='move'||type==='resize'||type==='move-break'){
     if(!dragMoved){
@@ -1793,6 +1810,7 @@ function openModal(sid,dkey,shid,e){
   const pos=sh.pos||'ホール';
   document.getElementById('modalPos').value=pos;
   document.getElementById('modalNote').value=sh.note||'';
+  const mm=document.getElementById('modalManual'); if(mm) mm.checked=!!sh.manual;
   // Use posColorMap as default if colorIdx not explicitly set
   const colorIdx=sh.colorIdx!==undefined ? sh.colorIdx : (posColorMap[pos]||0);
   sh.colorIdx=colorIdx;
@@ -1820,6 +1838,7 @@ function saveModal(){
   sh.end=hm2m(document.getElementById('modalEnd').value);
   sh.pos=document.getElementById('modalPos').value;
   sh.note=document.getElementById('modalNote').value;
+  const mm=document.getElementById('modalManual'); if(mm) sh.manual=mm.checked;
   // Save colorIdx from current selection
   const selected=document.querySelector('.color-dot.selected');
   if(selected){
@@ -1830,21 +1849,8 @@ function saveModal(){
   if(sh.colorIdx===undefined) sh.colorIdx=posColorMap[sh.pos]||0;
   const sid=modalTarget.sid, dkey=modalTarget.dkey;
   closeModal();
-  // Update DOM bar directly
-  const barEl=document.querySelector(`.shift-bar[data-sid="${sid}"][data-dk="${dkey}"][data-shid="${sh.id}"]`);
-  if(barEl){
-    const c=COLORS_LIST[sh.colorIdx]||COLORS_LIST[0];
-    barEl.style.background=c.bg;
-    barEl.style.color=c.fg;
-    barEl.style.borderColor=c.fg+'44';
-    const sp=barEl.querySelector('span');
-    if(sp) sp.textContent=sh.pos+' '+fmt(sh.start)+'-'+fmt(sh.end);
-    barEl.style.left=(180+m2px(sh.start))+'px';
-    barEl.style.width=Math.max(8,m2px(sh.end)-m2px(sh.start))+'px';
-  } else {
-    // Bar not in DOM (e.g. after renderTimeline), do full render
-    render();
-  }
+  // manual(確定/案)の切替で見た目が変わるため全体再描画
+  render();
   renderLeft();renderSummary();
   showToast('保存しました');
 }
@@ -1977,8 +1983,8 @@ function confirmShift(){showToast('シフトを確定しました ✓','success'
 function saveAll(){
   syncStaffToDb().then(()=>{
     const dates=getDates();
-    Promise.all(dates.map(d=>saveShiftsToDb(dk(d)))).then(()=>{
-      showToast('保存しました ✓','success');
+    Promise.all(dates.map(d=>saveShiftsToDb(dk(d), true))).then(()=>{
+      showToast('確定シフト（ドラッグ分）を保存しました ✓','success');
     });
   });
 }
@@ -3121,15 +3127,15 @@ async function loadStaffFromDb(){
   } catch(e){ console.log('loadStaff error:', e); }
 }
 
-async function saveShiftsToDb(dkey) {
+async function saveShiftsToDb(dkey, manualOnly=false) {
   const staff = getStaff();
   for(const s of staff) {
     const dbId = staffDbMap[s.name+'_'+s.store];
     if(!dbId) continue;
     // Delete existing shifts for this date
     await sbFetch('shifts?staff_id=eq.'+dbId+'&date=eq.'+dkey, 'DELETE');
-    // Insert new
-    const shifts = getShifts(s.id, dkey);
+    // Insert new（manualOnly のときはドラッグで引いた確定分だけ）
+    const shifts = getShifts(s.id, dkey).filter(sh => manualOnly ? sh.manual : true);
     for(const sh of shifts) {
       await sbFetch('shifts', 'POST', {
         staff_id: dbId, date: dkey,
@@ -3150,7 +3156,7 @@ async function loadShiftsFromDb(dkey) {
     if(!arr.find(sh => sh.start===row.start_min && sh.end===row.end_min)) {
       arr.push({
         id: shiftIdCnt++, start: row.start_min, end: row.end_min,
-        pos: row.position, colorIdx: row.color_idx||0, note: row.note||''
+        pos: row.position, colorIdx: row.color_idx||0, note: row.note||'', manual: true
       });
       setShifts(staffLocal.id, dkey, arr);
     }
@@ -3161,34 +3167,45 @@ async function loadShiftsFromDb(dkey) {
 async function confirmShiftWithNotify() {
   const dates = getDates();
   const dkey = currentView==='day' ? dk(dates[0]) : null;
-  
-  showToast('シフトを確定しています...', '');
-  
+
+  showToast('確定シフトを反映しています...', '');
+
   // Sync staff to DB first
   await syncStaffToDb();
-  
-  // Save shifts
+
+  const isManual = sh => !!sh.manual;
+
+  // Save shifts（ドラッグで引いた確定分のみDBへ）
   if(dkey) {
-    await saveShiftsToDb(dkey);
-    // Send push to staff who have shifts on this day
+    await saveShiftsToDb(dkey, true);
+    // Send push only to staff who have a dragged (manual) shift this day
     const d = dates[0];
-    const staffWithShifts = getStaff().filter(s => getShifts(s.id, dkey).length > 0);
+    const staffWithShifts = getStaff().filter(s => getShifts(s.id, dkey).some(isManual));
+    let notified = 0;
     for(const s of staffWithShifts) {
       const dbId = staffDbMap[s.name+'_'+s.store];
       if(!dbId) continue;
-      const shifts = getShifts(s.id, dkey);
-      const sh = shifts[0];
+      const manualShifts = getShifts(s.id, dkey).filter(isManual).sort((a,b)=>a.start-b.start);
+      if(!manualShifts.length) continue;
       const dateStr = `${d.getMonth()+1}月${d.getDate()}日(${['日','月','火','水','木','金','土'][d.getDay()]})`;
-      const msg = `${dateStr}のシフトが確定しました。${fmt(sh.start)}〜${fmt(sh.end)} (${sh.pos})`;
+      const timeStr = manualShifts.map(sh=>`${fmt(sh.start)}〜${fmt(sh.end)}${sh.pos?' ('+sh.pos+')':''}`).join('、');
+      const msg = `${dateStr}のシフトが確定しました。${timeStr}`;
       await sendPushToStaff(dbId, msg);
+      notified++;
     }
-    showToast(`シフトを確定しました。${staffWithShifts.length}名に通知を送りました ✓`, 'success');
+    // 下書き（案）が残っていれば知らせる
+    const draftCount = getStaff().reduce((n,s)=>n+getShifts(s.id,dkey).filter(sh=>!isManual(sh)).length,0);
+    let toast = notified>0
+      ? `確定シフトを反映し、${notified}名に通知しました ✓`
+      : 'ドラッグで引いた確定シフトがありません。希望の上をドラッグして引いてください';
+    if(draftCount>0) toast += `（案${draftCount}件は未確定のまま）`;
+    showToast(toast, notified>0?'success':'');
   } else {
-    // Multi-day: save all dates
+    // Multi-day: save dragged (manual) shifts for all dates（通知なし）
     for(const d of dates) {
-      await saveShiftsToDb(dk(d));
+      await saveShiftsToDb(dk(d), true);
     }
-    showToast('シフトを確定・保存しました ✓', 'success');
+    showToast('確定シフト（ドラッグ分）を保存しました ✓', 'success');
   }
 }
 
