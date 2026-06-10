@@ -134,6 +134,8 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
 .resize-left{left:0;border-radius:6px 0 0 6px}
 .resize-right{right:0;border-radius:0 6px 6px 0}
 .resize-handle::after{content:'';width:2px;height:14px;background:rgba(0,0,0,.2);border-radius:2px}
+/* タッチ端末ではリサイズ不可のためつまみを無効化（タップが必ずバー本体＝編集画面に届くように） */
+@media (pointer:coarse){ .resize-handle{display:none !important} }
 
 /* Request bars (希望シフト) */
 .request-bar{position:absolute;top:6px;height:36px;border-radius:6px;pointer-events:none;z-index:5;opacity:.5;border:2px dashed;display:flex;align-items:center;padding:0 6px;font-size:10px;font-weight:600;white-space:nowrap;overflow:hidden}
@@ -1757,8 +1759,8 @@ function onDE(e){
     }
   } else if(type==='move'||type==='resize'||type==='move-break'){
     if(!dragMoved){
-      // click - open modal for shifts
-      if(type==='move') openModal(dragState.sid,dragState.dkey,dragState.shid,e);
+      // click（動かさなかった）→ シフトは編集画面を開く
+      if(type==='move'||type==='resize') openModal(dragState.sid,dragState.dkey,dragState.shid,e);
     } else {
       document.querySelectorAll('.shift-bar.dragging,.break-bar.dragging').forEach(el=>el.classList.remove('dragging'));
       renderTimeline();renderLeft();renderSummary();renderHeadcount();
@@ -3248,7 +3250,7 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0610-E（確定エラー表示・確定通知）';
+  const BUILD_VER='ver 0610-F（タップで編集修正）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   updateMobileButtons();
   // numpad built directly in HTML
