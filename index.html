@@ -2887,31 +2887,43 @@ function printShift(){
   const todayKey=dk(new Date());
   const DAY_JP_L=['日','月','火','水','木','金','土'];
 
+  // 列数に応じてA4に収まるよう自動でスケール
+  const cols=dates.length;
+  const fontPx = cols<=2?13 : cols<=8?11 : cols<=12?10 : cols<=16?9 : cols<=24?8 : 7;
+  const chipFont = Math.max(7, fontPx-2);
+  const pad = cols<=12?'4px':'2px';
+  const staffW = cols<=3?20 : cols<=8?12 : 8;          // スタッフ列の幅(%)
+  const colW = ((100-staffW)/cols).toFixed(3);
+  const portrait = cols<=2;                            // 1〜2日分は縦向きの方が見やすい
+  const compact = cols>16;                             // 月など列が多いときは1行表記
+
+  let colgroup=`<col style="width:${staffW}%">`+dates.map(()=>`<col style="width:${colW}%">`).join('');
+
   let rows='';
   staff.forEach(s=>{
     let cells='';
     dates.forEach(d=>{
       const dkey=dk(d);
       const shifts=getShifts(s.id,dkey);
-      if(!shifts.length){cells+=`<td style="border:1px solid #ddd;padding:4px 6px;min-width:80px;font-size:10px;color:#aaa;text-align:center">-</td>`;return;}
+      if(!shifts.length){cells+=`<td class="c">-</td>`;return;}
       const inner=shifts.map(sh=>{
         const c=COLORS_LIST[sh.colorIdx||0];
-        return `<div style="background:${c.bg};color:${c.fg};border-radius:3px;padding:2px 5px;font-size:10px;font-weight:600;margin-bottom:2px">${sh.pos}<br>${fmt(sh.start)}-${fmt(sh.end)}</div>`;
+        const t=`${fmt(sh.start)}-${fmt(sh.end)}`;
+        const body=compact?`${t}`:`${sh.pos||''}<br>${t}`;
+        return `<div class="chip" style="background:${c.bg};color:${c.fg}">${body}</div>`;
       }).join('');
-      cells+=`<td style="border:1px solid #ddd;padding:4px;min-width:80px">${inner}</td>`;
+      cells+=`<td class="c">${inner}</td>`;
     });
     const [bg,fg]=AV_COLORS[s.id%AV_COLORS.length];
     rows+=`<tr>
-      <td style="border:1px solid #ddd;padding:6px 10px;white-space:nowrap;font-size:12px;font-weight:500">
-        <span style="display:inline-block;width:20px;height:20px;border-radius:50%;background:${bg};color:${fg};text-align:center;line-height:20px;font-size:9px;font-weight:700;margin-right:6px">${s.name.charAt(0)}</span>${s.name}
-      </td>${cells}
+      <td class="nm"><span class="av" style="background:${bg};color:${fg}">${s.name.charAt(0)}</span>${s.name}</td>${cells}
     </tr>`;
   });
 
   const dateHeaders=dates.map(d=>{
     const isT=dk(d)===todayKey,dow=d.getDay();
     const col=dow===0?'#DC2626':dow===6?'#2563EB':'#374151';
-    return `<th style="border:1px solid #ddd;padding:6px 8px;font-size:11px;font-weight:700;background:#F9FAFB;color:${col};min-width:80px;text-align:center">${d.getMonth()+1}/${d.getDate()}<br>${DAY_JP_L[dow]}${isT?'●':''}</th>`;
+    return `<th class="dh" style="color:${col}">${d.getMonth()+1}/${d.getDate()}<br>${DAY_JP_L[dow]}${isT?'●':''}</th>`;
   }).join('');
 
   const storeName=currentStore===0?(document.getElementById('storeName0').value||'本店'):(document.getElementById('storeName1').value||'2号店');
@@ -2920,17 +2932,28 @@ function printShift(){
   const win=window.open('','_blank');
   win.document.write(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>シフト表 ${dateRange}</title>
   <style>
-    body{font-family:'Noto Sans JP',sans-serif;font-size:12px;color:#1F2937;padding:20px}
-    h2{font-size:16px;font-weight:700;margin-bottom:4px}
-    .subtitle{font-size:11px;color:#6B7280;margin-bottom:16px}
-    table{border-collapse:collapse;width:100%}
-    @media print{body{padding:10px}@page{size:A4 landscape;margin:10mm}}
+    *{-webkit-print-color-adjust:exact;print-color-adjust:exact;box-sizing:border-box}
+    body{font-family:'Noto Sans JP',sans-serif;font-size:${fontPx}px;color:#1F2937;padding:16px;margin:0}
+    h2{font-size:15px;font-weight:700;margin:0 0 4px}
+    .subtitle{font-size:10px;color:#6B7280;margin-bottom:10px}
+    table{border-collapse:collapse;width:100%;table-layout:fixed}
+    th,td{border:1px solid #ddd;overflow:hidden;word-break:break-all}
+    th{background:#F9FAFB;font-weight:700;text-align:center;padding:4px 2px;font-size:${Math.max(8,fontPx-1)}px}
+    th.dh{font-size:${Math.max(8,fontPx-1)}px}
+    td.c{padding:${pad};text-align:center;vertical-align:top}
+    td.nm{padding:4px 6px;font-weight:600;white-space:nowrap;text-align:left;overflow:hidden;text-overflow:ellipsis}
+    th:first-child{text-align:left;padding-left:6px}
+    .av{display:inline-block;width:16px;height:16px;border-radius:50%;text-align:center;line-height:16px;font-size:8px;font-weight:700;margin-right:4px}
+    .chip{border-radius:3px;padding:2px 3px;font-size:${chipFont}px;font-weight:600;margin-bottom:2px;line-height:1.25}
+    @page{size:A4 ${portrait?'portrait':'landscape'};margin:8mm}
+    @media print{body{padding:0}}
   </style></head><body>
   <h2>シフト表 ー ${storeName}</h2>
   <div class="subtitle">${dateRange} / 印刷日時: ${new Date().toLocaleString('ja-JP')}</div>
   <table>
+    <colgroup>${colgroup}</colgroup>
     <thead><tr>
-      <th style="border:1px solid #ddd;padding:6px 10px;font-size:11px;font-weight:700;background:#F9FAFB;text-align:left;min-width:100px">スタッフ</th>
+      <th>スタッフ</th>
       ${dateHeaders}
     </tr></thead>
     <tbody>${rows}</tbody>
@@ -3355,7 +3378,7 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0610-J（シフトパターン入力修正・保存）';
+  const BUILD_VER='ver 0610-K（印刷A4フィット）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   updateMobileButtons();
   // numpad built directly in HTML
