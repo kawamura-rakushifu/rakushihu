@@ -429,6 +429,7 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
       </div>
       <button class="btn" id="fitBtn" onclick="toggleFit()" style="font-size:11px;padding:3px 10px" title="1日全体とスタッフ全員を画面内に収めて表示">⊞ 全体表示</button>
       <button class="btn btn-primary autofill-m" onclick="autoFill()" style="font-size:11px;padding:3px 10px">⚡ 自動作成</button>
+      <button class="btn" onclick="applyFixedShifts()" style="font-size:11px;padding:3px 10px" title="表示中の期間に、各スタッフの固定シフト（曜日設定）をまとめて反映します">🗓 固定反映</button>
       <div style="display:flex;align-items:center;gap:6px">
         <input id="staffSearch" class="staff-search" type="text" placeholder="スタッフ検索..." oninput="filterStaff(this.value)" style="width:120px;flex:none">
         <button id="groupToggleBtn" onclick="toggleGrouping()" title="グループ表示切替" style="flex-shrink:0;width:26px;height:26px;border-radius:5px;border:1px solid var(--primary);background:var(--primary-light);color:var(--primary);cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;transition:all .13s">☰</button>
@@ -1898,6 +1899,33 @@ function navigate(d){
 function goToday(){currentDate=new Date();currentDate.setHours(0,0,0,0);render();}
 function switchStore(v){currentStore=+v;document.getElementById('staffSearch') && (document.getElementById('staffSearch').value='');searchFilter='';render();}
 function filterStaff(v){searchFilter=v;render();}
+// 固定シフト（曜日ごと）を表示中の期間にまとめて反映（既存があれば上書きしない／案として入る）
+function applyFixedShifts(){
+  const dates=getDates();
+  const staff=getStaff();
+  let added=0, hasAnyFixed=false, skipped=0;
+  dates.forEach(d=>{
+    const dkey=dk(d), dow=d.getDay();
+    staff.forEach(s=>{
+      const fx=fixedShifts[s.name+'_'+s.store];
+      if(fx && Object.keys(fx).length) hasAnyFixed=true;
+      const f=fx&&fx[dow];
+      if(!f) return;
+      if(getShifts(s.id,dkey).length>0){ skipped++; return; } // 既存は上書きしない
+      const sh={id:shiftIdCnt++,start:f.start,end:f.end,pos:s.role,
+        colorIdx:posColorMap[s.role]!==undefined?posColorMap[s.role]:0,note:'固定'};
+      setShifts(s.id,dkey,[sh]);
+      added++;
+    });
+  });
+  render();renderLeft();renderSummary();renderHeadcount();
+  if(!hasAnyFixed){ showToast('固定シフトが未設定です。スタッフ管理の各スタッフで設定してください'); return; }
+  if(added===0){ showToast('反映できる枠がありませんでした（既にシフトがある日は上書きしません）'); return; }
+  let msg=`固定シフトを${added}件反映しました（案）`;
+  if(skipped>0) msg+=`／既存${skipped}件はそのまま`;
+  showToast(msg,'success');
+}
+
 function autoFill(){
   // Get required staffing from settings
   const req=autoFillRequirements;
@@ -3438,7 +3466,7 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0610-L（日表示は時間軸で印刷）';
+  const BUILD_VER='ver 0610-M（固定シフト反映ボタン）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   updateMobileButtons();
   // numpad built directly in HTML
