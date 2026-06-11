@@ -2887,7 +2887,67 @@ function printShift(){
   const todayKey=dk(new Date());
   const DAY_JP_L=['日','月','火','水','木','金','土'];
 
-  // 列数に応じてA4に収まるよう自動でスケール
+  const storeNameP=currentStore===0?(document.getElementById('storeName0').value||'本店'):(document.getElementById('storeName1').value||'2号店');
+
+  // === 日表示：画面と同じ「時間軸＋バー」のシフト表のまま印刷 ===
+  if(isSingle){
+    const d=dates[0], dkey=dk(d);
+    const T0=T_START*60, span=T_END*60-T0;
+    const pct=m=>((m-T0)/span*100);
+    let ticks='', glines='';
+    for(let h=T_START;h<=T_END;h++){
+      const L=pct(h*60);
+      if(h%1===0){ ticks+=`<div class="tk" style="left:${L}%">${h}</div>`; }
+      glines+=`<div class="gl" style="left:${L}%"></div>`;
+    }
+    let srows='';
+    staff.forEach(s=>{
+      const shifts=getShifts(s.id,dkey);
+      const breaks=(typeof getBreaks==='function')?getBreaks(s.id,dkey):[];
+      let bars='';
+      shifts.forEach(sh=>{
+        const c=COLORS_LIST[sh.colorIdx||0];
+        bars+=`<div class="pb" style="left:${pct(sh.start)}%;width:${pct(sh.end)-pct(sh.start)}%;background:${c.bg};color:${c.fg}">${sh.pos||''} ${fmt(sh.start)}-${fmt(sh.end)}</div>`;
+      });
+      breaks.forEach(b=>{
+        bars+=`<div class="bk" style="left:${pct(b.start)}%;width:${pct(b.end)-pct(b.start)}%" title="休憩"></div>`;
+      });
+      srows+=`<div class="row"><div class="nm">${s.name}</div><div class="tr">${glines}${bars||''}</div></div>`;
+    });
+    const dateStr=`${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日（${DAY_JP_L[d.getDay()]}）`;
+    const win=window.open('','_blank');
+    win.document.write(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>シフト表 ${dateStr}</title>
+    <style>
+      *{-webkit-print-color-adjust:exact;print-color-adjust:exact;box-sizing:border-box}
+      body{font-family:'Noto Sans JP',sans-serif;color:#1F2937;padding:14px;margin:0;font-size:11px}
+      h2{font-size:15px;margin:0 0 2px}
+      .sub{font-size:10px;color:#6B7280;margin-bottom:10px}
+      .nm{width:84px;flex:none;font-size:10px;font-weight:600;display:flex;align-items:center;padding:0 6px;border-right:1px solid #ccc}
+      .row{display:flex;align-items:stretch;min-height:24px;border-bottom:1px solid #eee}
+      .head .nm{font-weight:700}
+      .head .tr{position:relative;height:16px}
+      .tr{position:relative;flex:1;overflow:hidden}
+      .tk{position:absolute;top:0;font-size:8px;color:#666;transform:translateX(-50%)}
+      .gl{position:absolute;top:0;bottom:0;width:1px;background:#f1f1f1}
+      .pb{position:absolute;top:2px;bottom:2px;border-radius:3px;font-size:9px;font-weight:600;padding:0 3px;overflow:hidden;white-space:nowrap;display:flex;align-items:center;border:1px solid rgba(0,0,0,.08)}
+      .bk{position:absolute;top:2px;bottom:2px;background:repeating-linear-gradient(45deg,#9993,#9993 3px,#fff0 3px,#fff0 6px);border-radius:2px}
+      table,.sched{width:100%}
+      @page{size:A4 landscape;margin:8mm}
+      @media print{body{padding:0}}
+    </style></head><body>
+    <h2>シフト表 ー ${storeNameP}</h2>
+    <div class="sub">${dateStr} / 印刷日時: ${new Date().toLocaleString('ja-JP')}</div>
+    <div class="sched">
+      <div class="row head"><div class="nm">スタッフ＼時間</div><div class="tr">${ticks}</div></div>
+      ${srows}
+    </div>
+    <script>window.onload=()=>window.print()<\/script>
+    </body></html>`);
+    win.document.close();
+    return;
+  }
+
+  // 列数に応じてA4に収まるよう自動でスケール（週・月などの一覧表）
   const cols=dates.length;
   const fontPx = cols<=2?13 : cols<=8?11 : cols<=12?10 : cols<=16?9 : cols<=24?8 : 7;
   const chipFont = Math.max(7, fontPx-2);
@@ -3378,7 +3438,7 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0610-K（印刷A4フィット）';
+  const BUILD_VER='ver 0610-L（日表示は時間軸で印刷）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   updateMobileButtons();
   // numpad built directly in HTML
