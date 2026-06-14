@@ -2003,15 +2003,17 @@ function autoFill(){
 
     // Step 2: Fill remaining slots by position requirements
 
-    // Ensure at least 1 canMain staff is scheduled
-    const mainStaff=staff.filter(s=>s.canMain);
-    const mainAlreadyIn=mainStaff.some(s=>getShifts(s.id,dkey).length>0);
-    if(!mainAlreadyIn && mainStaff.length>0){
-      const s=mainStaff[0];
-      const pat=patterns[0];
-      const sh={id:shiftIdCnt++,start:pat.start,end:pat.end,
-        pos:s.role,colorIdx:posColorMap[s.role]!==undefined?posColorMap[s.role]:0,note:'メイン担当'};
-      setShifts(s.id,dkey,[sh]);
+    // Ensure at least 1 canMain staff is scheduled（時間帯ごとのメイン設定がある場合はそちらに任せる）
+    if(!hasAnyMainBand()){
+      const mainStaff=staff.filter(s=>s.canMain);
+      const mainAlreadyIn=mainStaff.some(s=>getShifts(s.id,dkey).length>0);
+      if(!mainAlreadyIn && mainStaff.length>0){
+        const s=mainStaff[0];
+        const pat=patterns[0];
+        const sh={id:shiftIdCnt++,start:pat.start,end:pat.end,
+          pos:s.role,colorIdx:posColorMap[s.role]!==undefined?posColorMap[s.role]:0,note:'メイン担当'};
+        setShifts(s.id,dkey,[sh]);
+      }
     }
 
     ['社員','キッチン','ホール'].forEach(pos=>{
@@ -2051,6 +2053,23 @@ function autoFill(){
           }
         });
       });
+      // Step 2.6: 各時間帯にメイン担当（canMain）を確保
+      needBands.forEach((band,bi)=>{
+        const need=getNeedMain(dow,bi);
+        if(need<=0) return;
+        let cov=mainBandCoverage(staff,dkey,band);
+        const avail=staff.filter(s=>s.canMain&&getShifts(s.id,dkey).length===0);
+        let ai=0;
+        while(cov<need && ai<avail.length){
+          const s=avail[ai++];
+          const pat=patterns.find(p=>p.start<=band.start && p.end>=band.end);
+          const st=pat?pat.start:band.start, en=pat?pat.end:band.end;
+          const sh={id:shiftIdCnt++,start:st,end:en,
+            pos:s.role,colorIdx:posColorMap[s.role]!==undefined?posColorMap[s.role]:0,note:'メイン'};
+          setShifts(s.id,dkey,[sh]);
+          cov++;
+        }
+      });
     }
   });
 
@@ -2059,10 +2078,12 @@ function autoFill(){
   dates.forEach(d=>{
     const dkey=dk(d);
     const dow=d.getDay();
-    // Check canMain coverage
-    const mainCovered=staff.some(s=>s.canMain&&getShifts(s.id,dkey).length>0);
-    if(!mainCovered&&staff.some(s=>s.canMain)){
-      shortages.push({date:`${d.getMonth()+1}/${d.getDate()}(${['日','月','火','水','木','金','土'][dow]})`,pos:'メイン担当',needed:1,actual:0});
+    // Check canMain coverage（時間帯ごとのメイン設定がある場合は時間帯側で判定）
+    if(!hasAnyMainBand()){
+      const mainCovered=staff.some(s=>s.canMain&&getShifts(s.id,dkey).length>0);
+      if(!mainCovered&&staff.some(s=>s.canMain)){
+        shortages.push({date:`${d.getMonth()+1}/${d.getDate()}(${['日','月','火','水','木','金','土'][dow]})`,pos:'メイン担当',needed:1,actual:0});
+      }
     }
     ['社員','キッチン','ホール'].forEach(pos=>{
       const needed=dow===0||dow===6?(req[pos]?.weekend||0):(req[pos]?.weekday||0);
@@ -2074,6 +2095,15 @@ function autoFill(){
     });
     // 時間帯ごとの不足
     if(needBands.length){
+      // メイン担当（時間帯）
+      needBands.forEach((band,bi)=>{
+        const need=getNeedMain(dow,bi);
+        if(need<=0) return;
+        const cov=mainBandCoverage(staff,dkey,band);
+        if(cov<need){
+          shortages.push({date:`${d.getMonth()+1}/${d.getDate()}(${['日','月','火','水','木','金','土'][dow]})`,pos:`メイン担当・${band.name}`,needed:need,actual:cov});
+        }
+      });
       ['社員','キッチン','ホール'].forEach(pos=>{
         needBands.forEach((band,bi)=>{
           const need=getNeed(pos,dow,bi);
@@ -2107,17 +2137,26 @@ let autoFillRequirements={
 const NEED_POS=['社員','キッチン','ホール'];
 let needBands=[ {name:'ランチ',start:11*60,end:15*60}, {name:'ディナー',start:17*60,end:22*60} ];
 let needReq={};        // needReq[pos][dow][bandIdx] = 人数   (dow 0=日..6=土)
+let needMain={};       // needMain[dow][bandIdx] = メイン担当の必要人数
 let needDowSel=1;      // 設定で選択中の曜日（既定:月）
 
 function persistNeed(){
   saveSettingToDb('autoFillRequirements', JSON.stringify(autoFillRequirements));
   saveSettingToDb('needBands', JSON.stringify(needBands));
   saveSettingToDb('needReq', JSON.stringify(needReq));
+  saveSettingToDb('needMain', JSON.stringify(needMain));
 }
 function getNeed(pos,dow,bi){ return (needReq[pos]&&needReq[pos][dow]&&needReq[pos][dow][bi])?needReq[pos][dow][bi]:0; }
 function setNeed(pos,dow,bi,v){
   needReq[pos]=needReq[pos]||{}; needReq[pos][dow]=needReq[pos][dow]||{};
   needReq[pos][dow][bi]=Math.max(0,Math.floor(+v||0));
+}
+function getNeedMain(dow,bi){ return (needMain[dow]&&needMain[dow][bi])?needMain[dow][bi]:0; }
+function setNeedMain(dow,bi,v){ needMain[dow]=needMain[dow]||{}; needMain[dow][bi]=Math.max(0,Math.floor(+v||0)); }
+function hasAnyMainBand(){ for(let d=0;d<7;d++){ for(let bi=0;bi<needBands.length;bi++){ if(getNeedMain(d,bi)>0) return true; } } return false; }
+// canMainのスタッフのうち、bandを覆うシフトを持つ人数（ポジション不問）
+function mainBandCoverage(staffArr,dkey,band){
+  return staffArr.filter(s=>s.canMain && getShifts(s.id,dkey).some(sh=>sh.start<band.end && sh.end>band.start)).length;
 }
 // そのposを担当しているシフト（sh.pos===pos）でbandを覆う人数
 function bandCoverage(staffArr,dkey,pos,band){
@@ -2140,6 +2179,9 @@ function removeNeedBand(i){
   const newReq={};
   NEED_POS.forEach(pos=>{ newReq[pos]={}; for(let d=0;d<7;d++){ newReq[pos][d]={}; needBands.forEach((_,bi)=>{ newReq[pos][d][bi]=getNeed(pos,d, bi>=i?bi+1:bi); }); } });
   needReq=newReq;
+  const newMain={};
+  for(let d=0;d<7;d++){ newMain[d]={}; needBands.forEach((_,bi)=>{ newMain[d][bi]=getNeedMain(d, bi>=i?bi+1:bi); }); }
+  needMain=newMain;
   renderNeedBands();renderNeedGrid();persistNeed();
 }
 function renderNeedBands(){
@@ -2166,6 +2208,12 @@ function renderNeedGrid(){
     <th style="text-align:left;font-size:10px;color:var(--gray500);padding:4px 2px;border-bottom:1px solid var(--gray200)">${DAY_JP[dow]}曜</th>`;
   needBands.forEach(b=>{ html+=`<th style="text-align:center;font-size:9px;color:var(--gray500);padding:4px 2px;border-bottom:1px solid var(--gray200)">${b.name}<br>${fmt(b.start)}-${fmt(b.end)}</th>`; });
   html+=`</tr></thead><tbody>`;
+  // メイン担当の行（ポジション不問でcanMainを各時間帯に確保）
+  html+=`<tr style="background:#FFF7ED"><td style="font-size:12px;font-weight:700;padding:5px 2px;color:#C2410C">⭐ メイン担当</td>`;
+  needBands.forEach((b,bi)=>{
+    html+=`<td style="text-align:center;padding:3px"><input type="number" min="0" max="20" value="${getNeedMain(dow,bi)}" onchange="setNeedMainFromInput(${bi},this.value)" style="width:42px;padding:4px;border:1px solid #FDBA74;border-radius:5px;font-size:12px;text-align:center;font-family:var(--font)"></td>`;
+  });
+  html+=`</tr>`;
   NEED_POS.forEach(pos=>{
     html+=`<tr><td style="font-size:12px;font-weight:600;padding:5px 2px">${pos}</td>`;
     needBands.forEach((b,bi)=>{
@@ -2177,13 +2225,17 @@ function renderNeedGrid(){
   el.innerHTML=html;
 }
 function setNeedFromInput(pos,bi,val){ setNeed(pos,needDowSel,bi,val); persistNeed(); }
+function setNeedMainFromInput(bi,val){ setNeedMain(needDowSel,bi,val); persistNeed(); }
 function copyNeedDow(scope){
   const src=needDowSel;
   let targets=[];
   if(scope==='weekday') targets=[1,2,3,4,5];
   else if(scope==='weekend') targets=[0,6];
   else targets=[0,1,2,3,4,5,6];
-  targets.forEach(d=>{ if(d===src) return; NEED_POS.forEach(pos=>{ needBands.forEach((_,bi)=>{ setNeed(pos,d,bi,getNeed(pos,src,bi)); }); }); });
+  targets.forEach(d=>{ if(d===src) return;
+    NEED_POS.forEach(pos=>{ needBands.forEach((_,bi)=>{ setNeed(pos,d,bi,getNeed(pos,src,bi)); }); });
+    needBands.forEach((_,bi)=>{ setNeedMain(d,bi,getNeedMain(src,bi)); });
+  });
   persistNeed();
   showToast(DAY_JP[src]+'曜の人数を'+(scope==='weekday'?'平日':scope==='weekend'?'土日':'全曜日')+'に適用しました ✓','success');
 }
@@ -2977,6 +3029,9 @@ async function loadSettingsFromDb(){
       if(r.key==='needReq'){
         try { const p=JSON.parse(r.value); if(p&&typeof p==='object') needReq=p; } catch(e){}
       }
+      if(r.key==='needMain'){
+        try { const p=JSON.parse(r.value); if(p&&typeof p==='object') needMain=p; } catch(e){}
+      }
       if(r.key==='staffPositions'){
         try { const p=JSON.parse(r.value); if(p&&typeof p==='object') staffPositions=p; } catch(e){}
       }
@@ -3668,7 +3723,7 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0610-U（社員も必要人数に従う）';
+  const BUILD_VER='ver 0610-V（時間帯ごとのメイン担当）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   // 自動更新: SWを登録し、新しいSWが有効化されたらページを1回だけ再読込（全端末に最新を届ける）
   if('serviceWorker' in navigator){
