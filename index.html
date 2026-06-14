@@ -556,8 +556,8 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
             <div id="needBandList"></div>
             <div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 14px">
               <input type="text" id="needBandName" placeholder="名前 例：ランチ" style="flex:1 1 100%;min-width:0;padding:6px 8px;border:1.5px solid var(--gray200);border-radius:var(--radius);font-size:11px;font-family:var(--font);outline:none">
-              <input type="time" id="needBandStart" value="11:00" style="flex:1 1 0;min-width:0;padding:6px 8px;border:1.5px solid var(--gray200);border-radius:var(--radius);font-size:11px;font-family:var(--font);outline:none">
-              <input type="time" id="needBandEnd" value="15:00" style="flex:1 1 0;min-width:0;padding:6px 8px;border:1.5px solid var(--gray200);border-radius:var(--radius);font-size:11px;font-family:var(--font);outline:none">
+              <select id="needBandStart" style="flex:1 1 0;min-width:0;padding:6px 8px;border:1.5px solid var(--gray200);border-radius:var(--radius);font-size:11px;font-family:var(--font);outline:none"></select>
+              <select id="needBandEnd" style="flex:1 1 0;min-width:0;padding:6px 8px;border:1.5px solid var(--gray200);border-radius:var(--radius);font-size:11px;font-family:var(--font);outline:none"></select>
               <button class="btn btn-sm" style="flex:1 1 100%" onclick="addNeedBand()">＋ 時間帯を追加</button>
             </div>
             <div style="font-size:11px;font-weight:700;color:var(--gray600);margin-bottom:6px">曜日を選んで人数を入力</div>
@@ -2183,7 +2183,17 @@ function copyNeedDow(scope){
   persistNeed();
   showToast(DAY_JP[src]+'曜の人数を'+(scope==='weekday'?'平日':scope==='weekend'?'土日':'全曜日')+'に適用しました ✓','success');
 }
-function renderNeedSettings(){ renderNeedBands();renderNeedDowTabs();renderNeedGrid(); }
+function populateBandTimeSelects(){
+  const ss=document.getElementById('needBandStart'), es=document.getElementById('needBandEnd');
+  if(!ss||!es) return;
+  if(ss.dataset.filled) return; // 一度だけ生成
+  let opts='';
+  for(let m=T_START*60; m<=T_END*60; m+=30){ opts+=`<option value="${fmt(m)}">${fmt(m)}</option>`; }
+  ss.innerHTML=opts; es.innerHTML=opts;
+  ss.value='11:00'; es.value='15:00';
+  ss.dataset.filled='1'; es.dataset.filled='1';
+}
+function renderNeedSettings(){ populateBandTimeSelects();renderNeedBands();renderNeedDowTabs();renderNeedGrid(); }
 
 
 function confirmShift(){showToast('シフトを確定しました ✓','success');}
@@ -3633,7 +3643,7 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0610-R（時間帯別の必要人数）';
+  const BUILD_VER='ver 0610-S（時間帯を30分刻みで選択）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   // 自動更新: SWを登録し、新しいSWが有効化されたらページを1回だけ再読込（全端末に最新を届ける）
   if('serviceWorker' in navigator){
