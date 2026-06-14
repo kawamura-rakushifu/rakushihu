@@ -3063,7 +3063,7 @@ function showToast(msg,type='',dur=2500){
 // ============ SUPABASE CONFIG ============
 const SUPABASE_URL = 'https://sykbnvcrwhnhudgjlght.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN5a2JudmNyd2huaHVkZ2psZ2h0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA4NjI3MzgsImV4cCI6MjA5NjQzODczOH0.wsIJ9YrP32xq8gkZIeyX_AfuqImQxbxdWp5ra4AdoM0';
-const VAPID_PUBLIC_KEY = 'BFA-LHehNrD52tD3Z9fxkjn_tw_MCIQ8jVZ69TZqr18PKOq5eLDCnsgg5zJzHXWHDRKjvqhgP5vOClSj4ci-tpI';
+const VAPID_PUBLIC_KEY = 'BCtkACn70PcbpoMnz5XC_ZyepdS_oOGOX0Ri4oxSGKPsjzk7qj7hxqzdyubn_Wxv_HFI6U9qsLgQYrxHeDMpNXw';
 
 async function sbFetch(path, method='GET', body=null) {
   // Preferヘッダー: POST・PATCHともにreturn=representationを付ける
@@ -3108,6 +3108,11 @@ async function registerPush(staffDbId) {
     await navigator.serviceWorker.ready;
     const perm = await Notification.requestPermission();
     if(perm !== 'granted') return;
+    // 既存の購読が古いVAPID鍵で作られていると新鍵で登録できないため、一度解除してから登録し直す
+    try {
+      const existing = await reg.pushManager.getSubscription();
+      if(existing) await existing.unsubscribe();
+    } catch(_){}
     const sub = await reg.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
@@ -3472,7 +3477,7 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0610-P（通知テストの原因表示）';
+  const BUILD_VER='ver 0610-Q（VAPID鍵修正）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   // 自動更新: SWを登録し、新しいSWが有効化されたらページを1回だけ再読込（全端末に最新を届ける）
   if('serviceWorker' in navigator){
