@@ -1999,13 +1999,7 @@ function autoFill(){
       }
     });
 
-    // Step 1.5: 社員を優先して必ず組み込む（ポジションが社員のスタッフを先に配置）
-    staff.filter(s=>s.role==='社員'&&getShifts(s.id,dkey).length===0).forEach((s,i)=>{
-      const pat=patterns[i%patterns.length];
-      const sh={id:shiftIdCnt++,start:pat.start,end:pat.end,
-        pos:s.role,colorIdx:posColorMap[s.role]!==undefined?posColorMap[s.role]:0,note:'社員'};
-      setShifts(s.id,dkey,[sh]);
-    });
+    // （社員は「必要人数（1日＋時間帯）」に従って配置します。専任を優先し、足りない分のみ追加）
 
     // Step 2: Fill remaining slots by position requirements
 
@@ -2023,7 +2017,8 @@ function autoFill(){
     ['社員','キッチン','ホール'].forEach(pos=>{
       const needed=dow===0||dow===6 ? (req[pos]?.weekend||0) : (req[pos]?.weekday||0);
       if(needed<=0) return;
-      const posStaff=staff.filter(s=>canDo(s,pos)&&getShifts(s.id,dkey).length===0);
+      const posStaff=staff.filter(s=>canDo(s,pos)&&getShifts(s.id,dkey).length===0)
+        .sort((a,b)=>(a.role===pos?0:1)-(b.role===pos?0:1));
       let filled=staff.filter(s=>getShifts(s.id,dkey).some(sh=>sh.pos===pos)).length;
       posStaff.forEach((s,i)=>{
         if(filled>=needed) return;
@@ -2042,7 +2037,8 @@ function autoFill(){
           const need=getNeed(pos,dow,bi);
           if(need<=0) return;
           let cov=bandCoverage(staff,dkey,pos,band);
-          const avail=staff.filter(s=>canDo(s,pos)&&getShifts(s.id,dkey).length===0);
+          const avail=staff.filter(s=>canDo(s,pos)&&getShifts(s.id,dkey).length===0)
+            .sort((a,b)=>(a.role===pos?0:1)-(b.role===pos?0:1));
           let ai=0;
           while(cov<need && ai<avail.length){
             const s=avail[ai++];
@@ -3672,7 +3668,7 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0610-T（兼務ポジション対応）';
+  const BUILD_VER='ver 0610-U（社員も必要人数に従う）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   // 自動更新: SWを登録し、新しいSWが有効化されたらページを1回だけ再読込（全端末に最新を届ける）
   if('serviceWorker' in navigator){
