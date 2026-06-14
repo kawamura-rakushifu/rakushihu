@@ -2514,6 +2514,7 @@ function saveStaff(){
   const name=document.getElementById('smName').value.trim();
   if(!name){showToast('氏名を入力してください');return;}
   const fxMap=readFixedShiftEditor();
+  const editId=staffEditId, editKey=staffEditKey; // 閉じる前に確保（closeでnullになるため）
   const pass=document.getElementById('smPass').value;
   if(staffEditId){
     const s=ALL_STAFF.find(x=>x.id===staffEditId);
@@ -2535,10 +2536,10 @@ function saveStaff(){
   }
   closeStaffModal();renderStaffMgmt();populateStaffSelect();render();
   // 固定シフトを保存（曜日ごと）。氏名/店舗が変わったら旧キーから移動
-  const savedStaff = staffEditId ? ALL_STAFF.find(x=>x.id===staffEditId) : ALL_STAFF[ALL_STAFF.length-1];
+  const savedStaff = editId ? ALL_STAFF.find(x=>x.id===editId) : ALL_STAFF[ALL_STAFF.length-1];
   if(savedStaff){
     const newKey = savedStaff.name+'_'+savedStaff.store;
-    if(staffEditKey && staffEditKey!==newKey) delete fixedShifts[staffEditKey];
+    if(editKey && editKey!==newKey) delete fixedShifts[editKey];
     const map = fxMap;
     if(Object.keys(map).length) fixedShifts[newKey]=map; else delete fixedShifts[newKey];
     saveSettingToDb('fixedShifts', JSON.stringify(fixedShifts));
@@ -2546,7 +2547,7 @@ function saveStaff(){
   // Save to Supabase
   syncStaffToDb().then(()=>{
     if(pass.length===4){
-      const updS=ALL_STAFF.find(x=>x.id===(staffEditId||staffIdCnt));
+      const updS=ALL_STAFF.find(x=>x.id===(editId||staffIdCnt));
       if(updS){
         const dbId=staffDbMap[updS.name+'_'+updS.store];
         if(dbId) sbFetch('staff?id=eq.'+dbId,'PATCH',{
@@ -3466,7 +3467,7 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0610-N（自動更新対応）';
+  const BUILD_VER='ver 0610-O（固定シフト消失バグ修正）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   // 自動更新: SWを登録し、新しいSWが有効化されたらページを1回だけ再読込（全端末に最新を届ける）
   if('serviceWorker' in navigator){
