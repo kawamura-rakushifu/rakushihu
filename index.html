@@ -3094,6 +3094,7 @@ async function sbFetch(path, method='GET', body=null) {
 // ============ PUSH NOTIFICATION ============
 let pushSubscription = null;
 let currentStaffDbId = null;
+let lastPushError = ''; // テスト送信の失敗理由を画面表示するために保持
 
 async function registerPush(staffDbId) {
   if(!('serviceWorker' in navigator) || !('PushManager' in window)) {
@@ -3158,6 +3159,7 @@ async function sendPushToStaff(staffDbId, message, title, url) {
   // 未購読ならアプリ内通知のみ（Pushは送れない）
   if(!subscription || !subscription.endpoint){
     console.log('no push subscription for staff', staffDbId);
+    lastPushError='このスタッフは通知未許可（購読情報なし）です';
     return false;
   }
 
@@ -3175,16 +3177,19 @@ async function sendPushToStaff(staffDbId, message, title, url) {
     if(!res.ok){
       const t = await res.text().catch(()=> '');
       console.error('send-push error ['+res.status+']:', t);
+      lastPushError = 'HTTP '+res.status+'：'+(t||'(本文なし)').slice(0,180);
       // 410/404 は購読失効 → DBから購読情報をクリアしておく
       if(res.status===410 || res.status===404){
         try { await sbFetch('staff?id=eq.'+staffDbId, 'PATCH', {push_subscription: null}); } catch(_){}
       }
       return false;
     }
+    lastPushError = '';
     return true;
   } catch(e){
     // プッシュ送信に失敗してもアプリ内通知は残るので致命的ではない
     console.error('send-push fetch error:', e);
+    lastPushError = '通信エラー：'+((e&&e.message)?e.message:e);
     return false;
   }
 }
@@ -3229,7 +3234,7 @@ async function sendTestPush(){
     resEl.textContent='✓ 送信しました。送信先の端末に通知が届くか確認してください。';
   }else{
     resEl.style.color='var(--red)';
-    resEl.textContent='送信できませんでした。購読失効か関数エラーの可能性があります（Supabaseの Functions → Logs を確認）。';
+    resEl.innerHTML='送信できませんでした。<br>原因：'+(lastPushError||'不明')+'<br><span style="color:var(--gray400)">（Supabase の Functions → send-push → Logs も確認できます）</span>';
   }
 }
 
@@ -3467,7 +3472,7 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0610-O（固定シフト消失バグ修正）';
+  const BUILD_VER='ver 0610-P（通知テストの原因表示）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   // 自動更新: SWを登録し、新しいSWが有効化されたらページを1回だけ再読込（全端末に最新を届ける）
   if('serviceWorker' in navigator){
