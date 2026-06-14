@@ -3466,8 +3466,16 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0610-M（固定シフト反映ボタン）';
+  const BUILD_VER='ver 0610-N（自動更新対応）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
+  // 自動更新: SWを登録し、新しいSWが有効化されたらページを1回だけ再読込（全端末に最新を届ける）
+  if('serviceWorker' in navigator){
+    let refreshing=false;
+    navigator.serviceWorker.addEventListener('controllerchange',()=>{
+      if(refreshing) return; refreshing=true; location.reload();
+    });
+    navigator.serviceWorker.register('sw.js').then(reg=>{ try{reg.update();}catch(_){} }).catch(()=>{});
+  }
   updateMobileButtons();
   // numpad built directly in HTML
   populateStaffSelect();
