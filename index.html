@@ -711,6 +711,15 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
         </select>
       </div>
     </div>
+    <div class="field">
+      <label class="field-label">対応できるポジション</label>
+      <div id="smPositions" style="display:flex;gap:14px;flex-wrap:wrap;padding:2px 0">
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" class="sm-pos" value="社員" style="width:15px;height:15px;accent-color:var(--primary)">社員</label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" class="sm-pos" value="キッチン" style="width:15px;height:15px;accent-color:var(--primary)">キッチン</label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" class="sm-pos" value="ホール" style="width:15px;height:15px;accent-color:var(--primary)">ホール</label>
+      </div>
+      <div style="font-size:10px;color:var(--gray400);margin-top:3px">メインのポジション以外にチェックを入れると、自動作成でそのポジションの不足を埋められます（未選択ならメインのみ対応）</div>
+    </div>
     <div class="field-row">
       <div class="field">
         <label class="field-label">月の目標時間</label>
@@ -2014,13 +2023,13 @@ function autoFill(){
     ['社員','キッチン','ホール'].forEach(pos=>{
       const needed=dow===0||dow===6 ? (req[pos]?.weekend||0) : (req[pos]?.weekday||0);
       if(needed<=0) return;
-      const posStaff=staff.filter(s=>s.role===pos&&getShifts(s.id,dkey).length===0);
-      let filled=staff.filter(s=>s.role===pos&&getShifts(s.id,dkey).length>0).length;
+      const posStaff=staff.filter(s=>canDo(s,pos)&&getShifts(s.id,dkey).length===0);
+      let filled=staff.filter(s=>getShifts(s.id,dkey).some(sh=>sh.pos===pos)).length;
       posStaff.forEach((s,i)=>{
         if(filled>=needed) return;
         const pat=patterns[i%patterns.length];
         const sh={id:shiftIdCnt++,start:pat.start,end:pat.end,
-          pos:s.role,colorIdx:posColorMap[s.role]!==undefined?posColorMap[s.role]:0,note:''};
+          pos:pos,colorIdx:posColorMap[pos]!==undefined?posColorMap[pos]:0,note:s.role!==pos?'応援':''};
         setShifts(s.id,dkey,[sh]);
         filled++;
       });
@@ -2033,15 +2042,14 @@ function autoFill(){
           const need=getNeed(pos,dow,bi);
           if(need<=0) return;
           let cov=bandCoverage(staff,dkey,pos,band);
-          const avail=staff.filter(s=>s.role===pos&&getShifts(s.id,dkey).length===0);
+          const avail=staff.filter(s=>canDo(s,pos)&&getShifts(s.id,dkey).length===0);
           let ai=0;
           while(cov<need && ai<avail.length){
             const s=avail[ai++];
-            // この時間帯を覆うパターンがあればそれを使う（複数バンドをまとめて満たせる）。無ければ時間帯そのもの
             const pat=patterns.find(p=>p.start<=band.start && p.end>=band.end);
             const st=pat?pat.start:band.start, en=pat?pat.end:band.end;
             const sh={id:shiftIdCnt++,start:st,end:en,
-              pos:s.role,colorIdx:posColorMap[s.role]!==undefined?posColorMap[s.role]:0,note:'時間帯'};
+              pos:pos,colorIdx:posColorMap[pos]!==undefined?posColorMap[pos]:0,note:s.role!==pos?'応援':'時間帯'};
             setShifts(s.id,dkey,[sh]);
             cov++;
           }
@@ -2063,7 +2071,7 @@ function autoFill(){
     ['社員','キッチン','ホール'].forEach(pos=>{
       const needed=dow===0||dow===6?(req[pos]?.weekend||0):(req[pos]?.weekday||0);
       if(needed<=0) return;
-      const actual=staff.filter(s=>s.role===pos&&getShifts(s.id,dkey).length>0).length;
+      const actual=staff.filter(s=>getShifts(s.id,dkey).some(sh=>sh.pos===pos)).length;
       if(actual<needed){
         shortages.push({date:`${d.getMonth()+1}/${d.getDate()}(${['日','月','火','水','木','金','土'][dow]})`,pos,needed,actual});
       }
@@ -2115,9 +2123,9 @@ function setNeed(pos,dow,bi,v){
   needReq[pos]=needReq[pos]||{}; needReq[pos][dow]=needReq[pos][dow]||{};
   needReq[pos][dow][bi]=Math.max(0,Math.floor(+v||0));
 }
-// posのスタッフのうち、bandを覆うシフトを持つ人数
+// そのposを担当しているシフト（sh.pos===pos）でbandを覆う人数
 function bandCoverage(staffArr,dkey,pos,band){
-  return staffArr.filter(s=>s.role===pos && getShifts(s.id,dkey).some(sh=>sh.start<band.end && sh.end>band.start)).length;
+  return staffArr.filter(s=>getShifts(s.id,dkey).some(sh=>sh.pos===pos && sh.start<band.end && sh.end>band.start)).length;
 }
 function addNeedBand(){
   const name=document.getElementById('needBandName').value.trim();
@@ -2658,6 +2666,9 @@ function openStaffModal(sid){
   document.getElementById('smCanMain').checked=s?s.canMain||false:false;
   staffEditKey = s ? (s.name+'_'+s.store) : null;
   buildFixedShiftEditor(staffEditKey);
+  // 対応できるポジションのチェックを反映（未設定ならメインroleのみ）
+  const capable = s ? staffCapable(s) : [document.getElementById('smRole').value];
+  document.querySelectorAll('#smPositions .sm-pos').forEach(cb=>{ cb.checked = capable.includes(cb.value); });
   document.getElementById('smDeleteBtn').style.display=sid?'inline-block':'none';
   el.classList.add('show');
 }
@@ -2668,6 +2679,8 @@ function saveStaff(){
   const name=document.getElementById('smName').value.trim();
   if(!name){showToast('氏名を入力してください');return;}
   const fxMap=readFixedShiftEditor();
+  // 対応できるポジション（チェック）を読み取り
+  const capList=[...document.querySelectorAll('#smPositions .sm-pos')].filter(c=>c.checked).map(c=>c.value);
   const editId=staffEditId, editKey=staffEditKey; // 閉じる前に確保（closeでnullになるため）
   const pass=document.getElementById('smPass').value;
   if(staffEditId){
@@ -2697,6 +2710,12 @@ function saveStaff(){
     const map = fxMap;
     if(Object.keys(map).length) fixedShifts[newKey]=map; else delete fixedShifts[newKey];
     saveSettingToDb('fixedShifts', JSON.stringify(fixedShifts));
+    // 対応できるポジションを保存（メインroleは必ず含める）
+    if(editKey && editKey!==newKey) delete staffPositions[editKey];
+    let caps = capList.slice();
+    if(!caps.includes(savedStaff.role)) caps.push(savedStaff.role);
+    staffPositions[newKey] = caps;
+    saveSettingToDb('staffPositions', JSON.stringify(staffPositions));
   }
   // Save to Supabase
   syncStaffToDb().then(()=>{
@@ -2728,6 +2747,13 @@ function deleteStaff(){
 let deadlines=[]; // [{month:'2026-07', dt:'2026-06-20T23:59'}]
 // 固定シフト（曜日ごと）: { 'name_store': { 0:{start,end}, 1:{...}, ... } }  0=日..6=土
 let fixedShifts={};
+// 対応できるポジション（兼務）: staffPositions['name_store'] = ['社員','ホール']。未設定ならメインroleのみ
+let staffPositions={};
+function staffCapable(s){
+  const arr=staffPositions[s.name+'_'+s.store];
+  return (arr&&arr.length)?arr:[s.role];
+}
+function canDo(s,pos){ return staffCapable(s).includes(pos); }
 let shiftPatterns=[
   {name:'開店',start:7*60,end:15*60},{name:'中番',start:11*60,end:19*60},
   {name:'閉店',start:15*60,end:23*60},{name:'フル',start:9*60,end:17*60},
@@ -2954,6 +2980,9 @@ async function loadSettingsFromDb(){
       }
       if(r.key==='needReq'){
         try { const p=JSON.parse(r.value); if(p&&typeof p==='object') needReq=p; } catch(e){}
+      }
+      if(r.key==='staffPositions'){
+        try { const p=JSON.parse(r.value); if(p&&typeof p==='object') staffPositions=p; } catch(e){}
       }
     });
     populateStoreSelects();
@@ -3643,7 +3672,7 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0610-S（時間帯を30分刻みで選択）';
+  const BUILD_VER='ver 0610-T（兼務ポジション対応）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   // 自動更新: SWを登録し、新しいSWが有効化されたらページを1回だけ再読込（全端末に最新を届ける）
   if('serviceWorker' in navigator){
