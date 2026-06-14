@@ -543,9 +543,31 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
           </div>
           <!-- Auto-fill requirements -->
           <div style="background:#fff;border-radius:var(--radius-lg);border:1px solid var(--gray200);padding:20px">
-            <div style="font-size:13px;font-weight:700;margin-bottom:4px">⚡ 自動作成 必要人数設定</div>
-            <div style="font-size:11px;color:var(--gray400);margin-bottom:12px">ポジションごとの最低出勤人数を設定します</div>
+            <div style="font-size:13px;font-weight:700;margin-bottom:4px">⚡ 自動作成 必要人数設定（1日の基本）</div>
+            <div style="font-size:11px;color:var(--gray400);margin-bottom:12px">1日あたりの最低出勤人数（ベース）</div>
             <div id="autoFillReqList"></div>
+          </div>
+
+          <!-- 時間帯ごとの必要人数（詳細） -->
+          <div style="background:#fff;border-radius:var(--radius-lg);border:1px solid var(--gray200);padding:20px">
+            <div style="font-size:13px;font-weight:700;margin-bottom:4px">🕐 時間帯ごとの必要人数（詳細）</div>
+            <div style="font-size:11px;color:var(--gray400);margin-bottom:10px">曜日×時間帯×ポジションで必要人数を指定。自動作成で不足分を上乗せして埋めます</div>
+            <div style="font-size:11px;font-weight:700;color:var(--gray600);margin-bottom:4px">時間帯の定義</div>
+            <div id="needBandList"></div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 14px">
+              <input type="text" id="needBandName" placeholder="名前 例：ランチ" style="flex:1 1 100%;min-width:0;padding:6px 8px;border:1.5px solid var(--gray200);border-radius:var(--radius);font-size:11px;font-family:var(--font);outline:none">
+              <input type="time" id="needBandStart" value="11:00" style="flex:1 1 0;min-width:0;padding:6px 8px;border:1.5px solid var(--gray200);border-radius:var(--radius);font-size:11px;font-family:var(--font);outline:none">
+              <input type="time" id="needBandEnd" value="15:00" style="flex:1 1 0;min-width:0;padding:6px 8px;border:1.5px solid var(--gray200);border-radius:var(--radius);font-size:11px;font-family:var(--font);outline:none">
+              <button class="btn btn-sm" style="flex:1 1 100%" onclick="addNeedBand()">＋ 時間帯を追加</button>
+            </div>
+            <div style="font-size:11px;font-weight:700;color:var(--gray600);margin-bottom:6px">曜日を選んで人数を入力</div>
+            <div id="needDowTabs" style="display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap"></div>
+            <div id="needGrid"></div>
+            <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+              <button class="btn btn-sm" style="flex:1" onclick="copyNeedDow('weekday')">平日(月〜金)に適用</button>
+              <button class="btn btn-sm" style="flex:1" onclick="copyNeedDow('weekend')">土日に適用</button>
+              <button class="btn btn-sm" style="flex:1" onclick="copyNeedDow('all')">全曜日に適用</button>
+            </div>
           </div>
 
           <!-- Position colors -->
@@ -2003,6 +2025,29 @@ function autoFill(){
         filled++;
       });
     });
+
+    // Step 2.5: 時間帯ごとの必要人数を満たすよう、不足分を上乗せで埋める（社員→キッチン→ホール）
+    if(needBands.length){
+      ['社員','キッチン','ホール'].forEach(pos=>{
+        needBands.forEach((band,bi)=>{
+          const need=getNeed(pos,dow,bi);
+          if(need<=0) return;
+          let cov=bandCoverage(staff,dkey,pos,band);
+          const avail=staff.filter(s=>s.role===pos&&getShifts(s.id,dkey).length===0);
+          let ai=0;
+          while(cov<need && ai<avail.length){
+            const s=avail[ai++];
+            // この時間帯を覆うパターンがあればそれを使う（複数バンドをまとめて満たせる）。無ければ時間帯そのもの
+            const pat=patterns.find(p=>p.start<=band.start && p.end>=band.end);
+            const st=pat?pat.start:band.start, en=pat?pat.end:band.end;
+            const sh={id:shiftIdCnt++,start:st,end:en,
+              pos:s.role,colorIdx:posColorMap[s.role]!==undefined?posColorMap[s.role]:0,note:'時間帯'};
+            setShifts(s.id,dkey,[sh]);
+            cov++;
+          }
+        });
+      });
+    }
   });
 
   // Step 3: Check for shortages
@@ -2023,6 +2068,19 @@ function autoFill(){
         shortages.push({date:`${d.getMonth()+1}/${d.getDate()}(${['日','月','火','水','木','金','土'][dow]})`,pos,needed,actual});
       }
     });
+    // 時間帯ごとの不足
+    if(needBands.length){
+      ['社員','キッチン','ホール'].forEach(pos=>{
+        needBands.forEach((band,bi)=>{
+          const need=getNeed(pos,dow,bi);
+          if(need<=0) return;
+          const cov=bandCoverage(staff,dkey,pos,band);
+          if(cov<need){
+            shortages.push({date:`${d.getMonth()+1}/${d.getDate()}(${['日','月','火','水','木','金','土'][dow]})`,pos:`${pos}・${band.name}`,needed:need,actual:cov});
+          }
+        });
+      });
+    }
   });
 
   render();
@@ -2040,6 +2098,92 @@ let autoFillRequirements={
   'キッチン':{weekday:2, weekend:2},
   'ホール':{weekday:3, weekend:2},
 };
+
+// ===== 時間帯ごとの必要人数（詳細） =====
+const NEED_POS=['社員','キッチン','ホール'];
+let needBands=[ {name:'ランチ',start:11*60,end:15*60}, {name:'ディナー',start:17*60,end:22*60} ];
+let needReq={};        // needReq[pos][dow][bandIdx] = 人数   (dow 0=日..6=土)
+let needDowSel=1;      // 設定で選択中の曜日（既定:月）
+
+function persistNeed(){
+  saveSettingToDb('autoFillRequirements', JSON.stringify(autoFillRequirements));
+  saveSettingToDb('needBands', JSON.stringify(needBands));
+  saveSettingToDb('needReq', JSON.stringify(needReq));
+}
+function getNeed(pos,dow,bi){ return (needReq[pos]&&needReq[pos][dow]&&needReq[pos][dow][bi])?needReq[pos][dow][bi]:0; }
+function setNeed(pos,dow,bi,v){
+  needReq[pos]=needReq[pos]||{}; needReq[pos][dow]=needReq[pos][dow]||{};
+  needReq[pos][dow][bi]=Math.max(0,Math.floor(+v||0));
+}
+// posのスタッフのうち、bandを覆うシフトを持つ人数
+function bandCoverage(staffArr,dkey,pos,band){
+  return staffArr.filter(s=>s.role===pos && getShifts(s.id,dkey).some(sh=>sh.start<band.end && sh.end>band.start)).length;
+}
+function addNeedBand(){
+  const name=document.getElementById('needBandName').value.trim();
+  if(!name){showToast('時間帯名を入力してください');return;}
+  const st=hm2m(document.getElementById('needBandStart').value);
+  const en=hm2m(document.getElementById('needBandEnd').value);
+  if(en<=st){showToast('終了は開始より後にしてください');return;}
+  needBands.push({name,start:st,end:en});
+  document.getElementById('needBandName').value='';
+  renderNeedBands();renderNeedGrid();persistNeed();
+  showToast('時間帯を追加しました ✓','success');
+}
+function removeNeedBand(i){
+  needBands.splice(i,1);
+  // バンド削除でインデックスがずれるため needReq を作り直す（削除分を除去）
+  const newReq={};
+  NEED_POS.forEach(pos=>{ newReq[pos]={}; for(let d=0;d<7;d++){ newReq[pos][d]={}; needBands.forEach((_,bi)=>{ newReq[pos][d][bi]=getNeed(pos,d, bi>=i?bi+1:bi); }); } });
+  needReq=newReq;
+  renderNeedBands();renderNeedGrid();persistNeed();
+}
+function renderNeedBands(){
+  const el=document.getElementById('needBandList'); if(!el) return;
+  if(!needBands.length){ el.innerHTML='<div style="font-size:11px;color:var(--gray400)">時間帯がありません。下で追加してください</div>'; return; }
+  el.innerHTML=needBands.map((b,i)=>`<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--gray100)">
+    <span style="flex:1;font-size:12px;font-weight:600">${b.name}</span>
+    <span style="font-size:11px;color:var(--gray500)">${fmt(b.start)}〜${fmt(b.end)}</span>
+    <button class="del-btn" onclick="removeNeedBand(${i})">✕</button>
+  </div>`).join('');
+}
+function renderNeedDowTabs(){
+  const el=document.getElementById('needDowTabs'); if(!el) return;
+  el.innerHTML=DAY_JP.map((d,i)=>{
+    const on=i===needDowSel; const wk=(i===0||i===6);
+    return `<button onclick="needDowSel=${i};renderNeedDowTabs();renderNeedGrid()" style="border:1px solid ${on?'var(--primary)':'var(--gray200)'};background:${on?'var(--primary)':'#fff'};color:${on?'#fff':(wk?'var(--red)':'var(--gray700)')};border-radius:6px;padding:4px 9px;font-size:12px;font-weight:700;cursor:pointer;font-family:var(--font)">${d}</button>`;
+  }).join('');
+}
+function renderNeedGrid(){
+  const el=document.getElementById('needGrid'); if(!el) return;
+  if(!needBands.length){ el.innerHTML='<div style="font-size:11px;color:var(--gray400)">先に時間帯を追加してください</div>'; return; }
+  const dow=needDowSel;
+  let html=`<table style="width:100%;border-collapse:collapse"><thead><tr>
+    <th style="text-align:left;font-size:10px;color:var(--gray500);padding:4px 2px;border-bottom:1px solid var(--gray200)">${DAY_JP[dow]}曜</th>`;
+  needBands.forEach(b=>{ html+=`<th style="text-align:center;font-size:9px;color:var(--gray500);padding:4px 2px;border-bottom:1px solid var(--gray200)">${b.name}<br>${fmt(b.start)}-${fmt(b.end)}</th>`; });
+  html+=`</tr></thead><tbody>`;
+  NEED_POS.forEach(pos=>{
+    html+=`<tr><td style="font-size:12px;font-weight:600;padding:5px 2px">${pos}</td>`;
+    needBands.forEach((b,bi)=>{
+      html+=`<td style="text-align:center;padding:3px"><input type="number" min="0" max="20" value="${getNeed(pos,dow,bi)}" onchange="setNeedFromInput('${pos}',${bi},this.value)" style="width:42px;padding:4px;border:1px solid var(--gray200);border-radius:5px;font-size:12px;text-align:center;font-family:var(--font)"></td>`;
+    });
+    html+=`</tr>`;
+  });
+  html+=`</tbody></table>`;
+  el.innerHTML=html;
+}
+function setNeedFromInput(pos,bi,val){ setNeed(pos,needDowSel,bi,val); persistNeed(); }
+function copyNeedDow(scope){
+  const src=needDowSel;
+  let targets=[];
+  if(scope==='weekday') targets=[1,2,3,4,5];
+  else if(scope==='weekend') targets=[0,6];
+  else targets=[0,1,2,3,4,5,6];
+  targets.forEach(d=>{ if(d===src) return; NEED_POS.forEach(pos=>{ needBands.forEach((_,bi)=>{ setNeed(pos,d,bi,getNeed(pos,src,bi)); }); }); });
+  persistNeed();
+  showToast(DAY_JP[src]+'曜の人数を'+(scope==='weekday'?'平日':scope==='weekend'?'土日':'全曜日')+'に適用しました ✓','success');
+}
+function renderNeedSettings(){ renderNeedBands();renderNeedDowTabs();renderNeedGrid(); }
 
 
 function confirmShift(){showToast('シフトを確定しました ✓','success');}
@@ -2581,7 +2725,7 @@ let shiftPatterns=[
 let adminPasscode='1234';
 
 function renderSettings(){
-  renderDeadlineList();renderPatternList();renderPosColorList();renderAutoFillReq();
+  renderDeadlineList();renderPatternList();renderPosColorList();renderAutoFillReq();renderNeedSettings();
 }
 
 function renderPosColorList(){
@@ -2638,6 +2782,7 @@ function renderAutoFillReq(){
 function setAutoFillReq(pos,type,val){
   if(!autoFillRequirements[pos]) autoFillRequirements[pos]={weekday:0,weekend:0};
   autoFillRequirements[pos][type]=Math.max(0,+val);
+  saveSettingToDb('autoFillRequirements', JSON.stringify(autoFillRequirements));
   showToast('設定を更新しました');
 }
 
@@ -2791,6 +2936,15 @@ async function loadSettingsFromDb(){
           if(Array.isArray(parsed)) { shiftPatterns = parsed; renderPatternList(); }
         } catch(e){ console.error('shiftPatterns parse error:', e); }
       }
+      if(r.key==='autoFillRequirements'){
+        try { const p=JSON.parse(r.value); if(p&&typeof p==='object') autoFillRequirements=p; } catch(e){}
+      }
+      if(r.key==='needBands'){
+        try { const p=JSON.parse(r.value); if(Array.isArray(p)) needBands=p; } catch(e){}
+      }
+      if(r.key==='needReq'){
+        try { const p=JSON.parse(r.value); if(p&&typeof p==='object') needReq=p; } catch(e){}
+      }
     });
     populateStoreSelects();
     // Update staff management tabs if visible
@@ -2803,6 +2957,8 @@ async function loadSettingsFromDb(){
     if(staffView&&staffView.style.display!=='none') renderStaffMgmt();
     // 締め切り一覧を再描画（DBから読み込んだ値を反映）
     renderDeadlineList();
+    // 必要人数の設定UIを再描画（設定画面が開いていれば反映）
+    if(document.getElementById('autoFillReqList')){ renderAutoFillReq(); renderNeedSettings(); }
     // スタッフ画面が表示中なら締め切りバナーも更新
     const staffScreenEl=document.getElementById('staffScreen');
     if(staffScreenEl && staffScreenEl.style.display!=='none') renderStaffDeadline();
@@ -3477,7 +3633,7 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0610-Q（VAPID鍵修正）';
+  const BUILD_VER='ver 0610-R（時間帯別の必要人数）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   // 自動更新: SWを登録し、新しいSWが有効化されたらページを1回だけ再読込（全端末に最新を届ける）
   if('serviceWorker' in navigator){
