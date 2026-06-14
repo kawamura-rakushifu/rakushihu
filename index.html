@@ -2925,7 +2925,7 @@ function renderDeadlineList(){
         <div style="font-size:11px;font-weight:600">${d.month.replace('-','年')}月</div>
         <div style="font-size:10px;color:${passed?'var(--red)':'var(--gray500)'}">締め切り: ${dt.getMonth()+1}/${dt.getDate()} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')} ${passed?'（締め切り済）':''}${d.reminded?' ・リマインド済':''}</div>
       </div>
-      ${passed?'':`<button class="btn btn-sm" style="font-size:10px;padding:3px 8px;color:var(--primary)" onclick="sendDeadlineReminder(${i},true)">リマインド送信</button>`}
+      ${passed?'':`<button class="btn btn-sm" style="font-size:10px;padding:3px 8px;color:var(--primary)" onclick="sendDeadlineReminder(${i},true)">未提出者に通知</button>`}
       <button class="btn btn-sm" style="font-size:10px;padding:3px 8px;color:var(--red)" onclick="removeDeadline(${i})">削除</button>
     </div>`;
   }).join('');
@@ -2955,7 +2955,7 @@ async function checkDeadlineReminders(){
   if(changed) await persistDeadlines();
 }
 
-// 指定インデックスの締め切りについて、全スタッフへリマインドを送信
+// 指定インデックスの締め切りについて、その月に「まだ希望を提出していない」スタッフへ通知
 // manual=true の場合はトースト表示＋締め切り済みでも送信可
 async function sendDeadlineReminder(i, manual){
   const d = deadlines[i];
@@ -2963,22 +2963,34 @@ async function sendDeadlineReminder(i, manual){
   const dt = new Date(d.dt);
   const [y,m] = d.month.split('-');
   const whenStr = `${dt.getMonth()+1}月${dt.getDate()}日 ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
-  const msg = `【締め切りのお知らせ】${(+m)}月分の希望シフト提出の締め切りが近づいています。締め切り: ${whenStr} までに提出してください。`;
+  const msg = `【締め切りのお知らせ】${(+m)}月分の希望シフトがまだ未提出です。締め切り: ${whenStr} までに提出してください。`;
   try {
-    // DBから全スタッフを取得して送信
+    const start = `${d.month}-01`, end = `${d.month}-31`;
+    // その月に希望を提出済みのスタッフID
+    const reqRows = await sbFetch(`requests?select=staff_id&date=gte.${start}&date=lte.${end}`);
+    const submitted = new Set((reqRows||[]).map(r=>r.staff_id));
+    // 全スタッフ
     const staffRows = await sbFetch('staff?select=id');
     if(!staffRows || !staffRows.length){
       if(manual) showToast('送信対象のスタッフがいません');
       return false;
     }
-    for(const s of staffRows){
-      await sendPushToStaff(s.id, msg, '希望提出リマインド');
+    const targets = staffRows.filter(s=>!submitted.has(s.id));
+    if(targets.length===0){
+      d.reminded = true; renderDeadlineList();
+      if(manual){ await persistDeadlines(); showToast('全員が提出済みです（未提出者なし）','success'); }
+      return true;
+    }
+    let n=0;
+    for(const s of targets){
+      const ok = await sendPushToStaff(s.id, msg, '希望提出リマインド');
+      if(ok) n++;
     }
     d.reminded = true;
     renderDeadlineList();
     if(manual){
       await persistDeadlines();
-      showToast(`${staffRows.length}名にリマインドを送りました ✓`,'success');
+      showToast(`未提出の${targets.length}名に通知しました（届いた購読: ${n}件）✓`,'success',5000);
     }
     return true;
   } catch(e){
@@ -3734,7 +3746,7 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0610-W（購読の自動修復）';
+  const BUILD_VER='ver 0610-X（未提出者へ締切リマインド）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   // 自動更新: SWを登録し、新しいSWが有効化されたらページを1回だけ再読込（全端末に最新を届ける）
   if('serviceWorker' in navigator){
