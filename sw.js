@@ -1,7 +1,7 @@
 // らくシフト Service Worker
-// 重要: HTML/アセットをキャッシュしない方針にして、常に最新版を読み込む。
-// (以前のSWが index.html をキャッシュしていたため、更新が反映されない問題があった)
-const SW_VERSION = 'v4-nocache-2026-06-10';
+// 方針: HTML(ナビゲーション)は常にネットワークから取得し、古い表示が残らないようにする。
+// iPhoneのホーム画面アプリ(PWA)でも最新版へ自動更新させるため、network-first を明示する。
+const SW_VERSION = 'v5-netfirst-2026-06-10';
 
 self.addEventListener('install', (e) => {
   self.skipWaiting();
@@ -16,7 +16,15 @@ self.addEventListener('activate', (e) => {
   })());
 });
 
-// fetchハンドラは設置しない = ブラウザが毎回ネットワークから取得（古い表示が残らない）
+// ナビゲーション(HTMLの読み込み)は常に最新をネットワークから取得（キャッシュ無視）
+self.addEventListener('fetch', (e) => {
+  const req = e.request;
+  if (req.mode === 'navigate') {
+    e.respondWith(
+      fetch(req, { cache: 'no-store' }).catch(() => caches.match(req))
+    );
+  }
+});
 
 self.addEventListener('push', (e) => {
   let payload = {};
