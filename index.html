@@ -2754,6 +2754,9 @@ function saveStaff(){
   const savedStaff = editId ? ALL_STAFF.find(x=>x.id===editId) : ALL_STAFF[ALL_STAFF.length-1];
   if(savedStaff){
     const newKey = savedStaff.name+'_'+savedStaff.store;
+    // 再登録なら削除リストから外す
+    const di=deletedStaff.indexOf(newKey);
+    if(di>=0){ deletedStaff.splice(di,1); saveSettingToDb('deletedStaff', JSON.stringify(deletedStaff)); }
     if(editKey && editKey!==newKey) delete fixedShifts[editKey];
     const map = fxMap;
     if(Object.keys(map).length) fixedShifts[newKey]=map; else delete fixedShifts[newKey];
@@ -2783,16 +2786,38 @@ function saveStaff(){
   showToast('スタッフ情報を保存しました ✓','success');
 }
 
-function deleteStaff(){
+async function deleteStaff(){
   if(!staffEditId) return;
   if(!confirm('このスタッフを削除しますか？シフトデータも削除されます。')) return;
   const idx=ALL_STAFF.findIndex(x=>x.id===staffEditId);
+  const s = idx>=0 ? ALL_STAFF[idx] : null;
   if(idx>=0) ALL_STAFF.splice(idx,1);
-  closeStaffModal();renderStaffMgmt();populateStaffSelect();render();showToast('スタッフを削除しました');
+  closeStaffModal();renderStaffMgmt();populateStaffSelect();render();
+  if(s){
+    const key=s.name+'_'+s.store;
+    // 削除済みとして記録（サンプルが再読込で復活しないように）
+    if(!deletedStaff.includes(key)) deletedStaff.push(key);
+    try { await saveSettingToDb('deletedStaff', JSON.stringify(deletedStaff)); } catch(_){}
+    // 固定シフト・兼務設定も削除
+    delete fixedShifts[key]; delete staffPositions[key];
+    try { await saveSettingToDb('fixedShifts', JSON.stringify(fixedShifts)); } catch(_){}
+    try { await saveSettingToDb('staffPositions', JSON.stringify(staffPositions)); } catch(_){}
+    // DBから本体・関連データを削除
+    const dbId = staffDbMap[key] || s.dbId;
+    if(dbId){
+      try { await sbFetch('shifts?staff_id=eq.'+dbId, 'DELETE'); } catch(_){}
+      try { await sbFetch('requests?staff_id=eq.'+dbId, 'DELETE'); } catch(_){}
+      try { await sbFetch('staff?id=eq.'+dbId, 'DELETE'); } catch(_){}
+      delete staffDbMap[key];
+    }
+  }
+  showToast('スタッフを削除しました');
 }
 
 // ============ SETTINGS ============
 let deadlines=[]; // [{month:'2026-07', dt:'2026-06-20T23:59'}]
+// 削除済みスタッフのキー（name_store）。サンプル含め一度消したら復活させない
+let deletedStaff=[];
 // 固定シフト（曜日ごと）: { 'name_store': { 0:{start,end}, 1:{...}, ... } }  0=日..6=土
 let fixedShifts={};
 // 対応できるポジション（兼務）: staffPositions['name_store'] = ['社員','ホール']。未設定ならメインroleのみ
@@ -3046,6 +3071,9 @@ async function loadSettingsFromDb(){
       }
       if(r.key==='staffPositions'){
         try { const p=JSON.parse(r.value); if(p&&typeof p==='object') staffPositions=p; } catch(e){}
+      }
+      if(r.key==='deletedStaff'){
+        try { const p=JSON.parse(r.value); if(Array.isArray(p)) deletedStaff=p; } catch(e){}
       }
     });
     populateStoreSelects();
@@ -3571,8 +3599,8 @@ async function syncStaffToDb() {
     const local = ALL_STAFF.find(s => s.name===dbS.name && s.store===dbS.store);
     if(local && dbS.passcode) local.passcode = dbS.passcode;
   });
-  // Insert missing staff
-  const toInsert = ALL_STAFF.filter(s => !staffDbMap[s.name+'_'+s.store]);
+  // Insert missing staff（削除済みキーは再挿入しない）
+  const toInsert = ALL_STAFF.filter(s => !staffDbMap[s.name+'_'+s.store] && !deletedStaff.includes(s.name+'_'+s.store));
   for(const s of toInsert) {
     const res = await sbFetch('staff', 'POST', {
       store: s.store, name: s.name, role: s.role,
@@ -3593,7 +3621,9 @@ async function loadStaffFromDb(){
     const dbKeys = new Set(rows.map(r=>r.name+'_'+r.store));
     // Update ALL_STAFF with DB data
     rows.forEach(dbS=>{
-      staffDbMap[dbS.name+'_'+dbS.store]=dbS.id;
+      const key=dbS.name+'_'+dbS.store;
+      if(deletedStaff.includes(key)) return; // 削除済みは復活させない
+      staffDbMap[key]=dbS.id;
       const local=ALL_STAFF.find(s=>s.name===dbS.name&&s.store===dbS.store);
       if(local){
         // Update existing staff
@@ -3613,11 +3643,12 @@ async function loadStaffFromDb(){
         });
       }
     });
-    // DBに存在しないローカル項目（=改名前の古い名前など）を除去。
-    // その店舗がDBに登録済みの場合のみ削除し、未同期店舗のスタッフは残す。
+    // DBに存在しないローカル項目（改名前の古い名前・削除済みサンプル）を除去
     for(let i=ALL_STAFF.length-1;i>=0;i--){
       const s=ALL_STAFF[i];
-      if(dbStores.has(s.store) && !dbKeys.has(s.name+'_'+s.store)){
+      const key=s.name+'_'+s.store;
+      if(deletedStaff.includes(key)){ ALL_STAFF.splice(i,1); continue; }
+      if(dbStores.has(s.store) && !dbKeys.has(key)){
         ALL_STAFF.splice(i,1);
       }
     }
@@ -3746,7 +3777,7 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0610-X（未提出者へ締切リマインド）';
+  const BUILD_VER='ver 0610-Y（サンプル削除の修正）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   // 自動更新: SWを登録し、新しいSWが有効化されたらページを1回だけ再読込（全端末に最新を届ける）
   if('serviceWorker' in navigator){
@@ -3760,24 +3791,14 @@ function init(){
   // numpad built directly in HTML
   populateStaffSelect();
   populateStoreSelects();
-  // Load settings from DB
-  loadSettingsFromDb();
-  // スタッフ情報もDBから読み込む（改名・店舗を反映。スタッフ端末でも最新の名前にする）
-  loadStaffFromDb();
+  // Load settings from DB（削除リスト等を先に読み込んでからスタッフを読み込む）
+  loadSettingsFromDb().then(()=>loadStaffFromDb());
   // Set default values for deadline inputs
   const now=new Date();
   document.getElementById('deadlineMonth').value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
   const defDt=new Date(now.getFullYear(),now.getMonth()+1,0,23,59);
   document.getElementById('deadlineDt').value=`${defDt.getFullYear()}-${String(defDt.getMonth()+1).padStart(2,'0')}-${String(defDt.getDate()).padStart(2,'0')}T23:59`;
   renderPatternList();
-  // Demo seed requests
-  const today=new Date();today.setHours(0,0,0,0);
-  for(let i=0;i<3;i++){
-    const d=new Date(today);d.setDate(today.getDate()+i+1);
-    const dkey=dk(d);
-    const sid=ALL_STAFF[i].id;
-    setRequests(sid,dkey,[{id:reqIdCnt++,start:10*60,end:18*60,pos:'ホール',note:'',status:'pending'}]);
-  }
   updatePendingCount();
 }
 init();
