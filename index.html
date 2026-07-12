@@ -1016,7 +1016,7 @@ function switchAdminTab(tab,el){
   const fab=document.getElementById('addFab');
   if(fab) fab.style.display=tab==='timeline'?'flex':'none';
   if(tab!=='timeline' && addMode) toggleAddMode(); // 別タブに移ったら追加モード解除
-  if(tab==='timeline') loadRequestsFromDb().then(()=>render());
+  if(tab==='timeline') Promise.all([loadRequestsFromDb(), loadShiftsForView()]).then(()=>render());
   if(tab==='requests') loadRequestsFromDb().then(()=>renderRequestPanel());
   if(tab==='staff'){staffMgmtStore=currentStore;renderStaffMgmt();}
   if(tab==='settings') renderSettings();
@@ -1919,16 +1919,16 @@ function jumpToDay(dkey){
   render();
 }
 
-function setView(v,el){currentView=v;document.querySelectorAll('.vtab').forEach(b=>b.classList.remove('active'));el.classList.add('active');render();}
+function setView(v,el){currentView=v;document.querySelectorAll('.vtab').forEach(b=>b.classList.remove('active'));el.classList.add('active');refreshTimeline();}
 function navigate(d){
   if(currentView==='day') currentDate.setDate(currentDate.getDate()+d);
   else if(currentView==='week') currentDate.setDate(currentDate.getDate()+d*7);
   else if(currentView==='halfmonth') currentDate.setDate(currentDate.getDate()+d*15);
   else currentDate.setMonth(currentDate.getMonth()+d);
-  render();
+  refreshTimeline();
 }
-function goToday(){currentDate=new Date();currentDate.setHours(0,0,0,0);render();}
-function switchStore(v){currentStore=+v;document.getElementById('staffSearch') && (document.getElementById('staffSearch').value='');searchFilter='';render();}
+function goToday(){currentDate=new Date();currentDate.setHours(0,0,0,0);refreshTimeline();}
+function switchStore(v){currentStore=+v;document.getElementById('staffSearch') && (document.getElementById('staffSearch').value='');searchFilter='';refreshTimeline();}
 function filterStaff(v){searchFilter=v;render();}
 // 固定シフト（曜日ごと）を表示中の期間にまとめて反映（既存があれば上書きしない／案として入る）
 function applyFixedShifts(){
@@ -3188,6 +3188,7 @@ async function doAdminLogin(){
     await loadStaffFromDb();
     await upsertAllStaffToDb();
     await loadRequestsFromDb();   // 提出された希望を読み込む
+    await loadShiftsForView();     // 確定済みシフトを読み込む（閉じても消えないように）
     render();
     // 締め切り間近の月があれば自動でリマインド送信（重複なし）
     checkDeadlineReminders();
@@ -3694,7 +3695,30 @@ async function loadShiftsFromDb(dkey) {
   });
 }
 
-// ============ CONFIRM SHIFT WITH NOTIFICATIONS ============
+// 表示中の期間の確定シフトをまとめてDBから読み込む（保存済みが再表示されるように）
+async function loadShiftsForView(){
+  try {
+    const dates=getDates();
+    if(!dates.length) return;
+    const start=dk(dates[0]), end=dk(dates[dates.length-1]);
+    const rows=await sbFetch('shifts?date=gte.'+start+'&date=lte.'+end+'&select=*,staff(id,name,store)&order=date');
+    if(!rows) return;
+    rows.forEach(row=>{
+      if(!row.staff) return;
+      const staffLocal=ALL_STAFF.find(s=>s.name===row.staff.name && s.store===row.staff.store);
+      if(!staffLocal) return;
+      const dkey=row.date;
+      const arr=getShifts(staffLocal.id, dkey);
+      if(!arr.find(sh=>sh.start===row.start_min && sh.end===row.end_min && sh.pos===row.position)){
+        arr.push({ id: shiftIdCnt++, start: row.start_min, end: row.end_min,
+          pos: row.position, colorIdx: row.color_idx||0, note: row.note||'', manual:true });
+        setShifts(staffLocal.id, dkey, arr);
+      }
+    });
+  } catch(e){ console.log('loadShiftsForView error:', e); }
+}
+// 確定シフトを読み込んでからタイムラインを再描画
+function refreshTimeline(){ loadShiftsForView().then(()=>render()); }
 async function confirmShiftWithNotify() {
   const dates = getDates();
   const dkey = currentView==='day' ? dk(dates[0]) : null;
@@ -3777,7 +3801,7 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0610-Y（サンプル削除の修正）';
+  const BUILD_VER='ver 0610-Z（確定シフト再読込の修正）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   // 自動更新: SWを登録し、新しいSWが有効化されたらページを1回だけ再読込（全端末に最新を届ける）
   if('serviceWorker' in navigator){
