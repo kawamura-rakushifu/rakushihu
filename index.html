@@ -1819,7 +1819,7 @@ function onDE(e){
       // シフトの移動・リサイズを保存（確定として残す）
       if(type==='move'||type==='resize'){
         const shx=getShifts(dragState.sid,dragState.dkey).find(x=>x.id===dragState.shid);
-        if(shx){ shx.manual=true; const dk2=dragState.dkey; saveShiftsToDb(dk2, true).then(()=>showToast('保存しました ✓','success')).catch(()=>{}); }
+        if(shx){ shx.manual=true; const sid2=dragState.sid, dk2=dragState.dkey; saveStaffDayShifts(sid2, dk2).then(r=>{ if(r.ok) showToast('保存しました ✓','success'); else showToast('保存に失敗：'+(r.reason||'不明'),'error',0); }); }
       }
     }
   }
@@ -1915,7 +1915,10 @@ function saveModal(){
   render();
   renderLeft();renderSummary();
   // 編集は必ずDBへ保存（閉じても・再読込しても・ログアウトしても戻らないように）
-  saveShiftsToDb(dkey, true).then(()=>showToast('保存しました ✓','success')).catch(()=>showToast('保存しました（DB反映に失敗）',''));
+  saveStaffDayShifts(sid, dkey).then(r=>{
+    if(r.ok) showToast('保存しました ✓','success');
+    else showToast('保存に失敗：'+(r.reason||'不明'),'error',0);
+  });
 }
 function deleteShiftModal(){
   if(!modalTarget) return;
@@ -3767,6 +3770,27 @@ async function loadStaffFromDb(){
   } catch(e){ console.log('loadStaff error:', e); }
 }
 
+// 特定スタッフの、特定日の確定シフトだけを確実にDB保存する（編集・移動用）
+async function saveStaffDayShifts(sid, dkey){
+  const s = ALL_STAFF.find(x=>x.id===sid);
+  if(!s){ return {ok:false, reason:'staff not found'}; }
+  let dbId = staffDbMap[s.name+'_'+s.store] || s.dbId;
+  if(!dbId){
+    try { await syncStaffToDb(); } catch(_){}
+    dbId = staffDbMap[s.name+'_'+s.store] || s.dbId;
+  }
+  if(!dbId){ return {ok:false, reason:'dbId未解決'}; }
+  try {
+    await sbFetch('shifts?staff_id=eq.'+dbId+'&date=eq.'+dkey, 'DELETE');
+    const shifts = getShifts(sid, dkey).filter(sh=>sh.manual);
+    for(const sh of shifts){
+      await sbFetch('shifts','POST',{ staff_id:dbId, date:dkey,
+        start_min:sh.start, end_min:sh.end, position:sh.pos, color_idx:sh.colorIdx||0, note:sh.note||'' });
+    }
+    return {ok:true};
+  } catch(e){ return {ok:false, reason:(e&&e.message)?e.message:String(e)}; }
+}
+
 async function saveShiftsToDb(dkey, manualOnly=false) {
   const staff = getStaff();
   for(const s of staff) {
@@ -3911,7 +3935,7 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0712-D（編集・移動を確実保存）';
+  const BUILD_VER='ver 0712-E（編集保存をピンポイント化）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   // 自動更新: SWを登録し、新しいSWが有効化されたらページを1回だけ再読込（全端末に最新を届ける）
   if('serviceWorker' in navigator){
