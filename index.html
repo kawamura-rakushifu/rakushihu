@@ -1903,11 +1903,17 @@ function saveModal(){
   // Apply posColorMap if no manual color selected
   if(sh.colorIdx===undefined) sh.colorIdx=posColorMap[sh.pos]||0;
   const sid=modalTarget.sid, dkey=modalTarget.dkey;
+  const wasManual=!!sh.manual;
   closeModal();
   // manual(確定/案)の切替で見た目が変わるため全体再描画
   render();
   renderLeft();renderSummary();
-  showToast('保存しました');
+  if(wasManual){
+    // 確定シフトの編集はDBへ保存（閉じても・再読込しても戻らないように）
+    saveShiftsToDb(dkey, true).then(()=>showToast('保存しました ✓','success')).catch(()=>showToast('保存しました（DB反映に失敗）',''));
+  } else {
+    showToast('保存しました（案は「確定」で反映されます）');
+  }
 }
 function deleteShiftModal(){
   if(!modalTarget) return;
@@ -3803,17 +3809,19 @@ async function loadShiftsForView(){
     const start=dk(dates[0]), end=dk(dates[dates.length-1]);
     const rows=await sbFetch('shifts?date=gte.'+start+'&date=lte.'+end+'&select=*,staff(id,name,store)&order=date');
     if(!rows) return;
+    // このロード前に既にローカルにシフトがある staff+date は上書きしない（編集内容を保持）
+    const occupied=new Set();
+    Object.keys(shiftData).forEach(k=>{ if((shiftData[k]||[]).length) occupied.add(k); });
     rows.forEach(row=>{
       if(!row.staff) return;
       const staffLocal=ALL_STAFF.find(s=>s.name===row.staff.name && s.store===row.staff.store);
       if(!staffLocal) return;
       const dkey=row.date;
+      if(occupied.has(staffLocal.id+'_'+dkey)) return; // 既存（＝編集済み）は触らない
       const arr=getShifts(staffLocal.id, dkey);
-      if(!arr.find(sh=>sh.start===row.start_min && sh.end===row.end_min && sh.pos===row.position)){
-        arr.push({ id: shiftIdCnt++, start: row.start_min, end: row.end_min,
-          pos: row.position, colorIdx: row.color_idx||0, note: row.note||'', manual:true });
-        setShifts(staffLocal.id, dkey, arr);
-      }
+      arr.push({ id: shiftIdCnt++, start: row.start_min, end: row.end_min,
+        pos: row.position, colorIdx: row.color_idx||0, note: row.note||'', manual:true });
+      setShifts(staffLocal.id, dkey, arr);
     });
   } catch(e){ console.log('loadShiftsForView error:', e); }
 }
@@ -3901,7 +3909,7 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0712-B（みんなを時間軸表示）';
+  const BUILD_VER='ver 0712-C（シフト編集の保持修正）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   // 自動更新: SWを登録し、新しいSWが有効化されたらページを1回だけ再読込（全端末に最新を届ける）
   if('serviceWorker' in navigator){
