@@ -1816,6 +1816,11 @@ function onDE(e){
     } else {
       document.querySelectorAll('.shift-bar.dragging,.break-bar.dragging').forEach(el=>el.classList.remove('dragging'));
       renderTimeline();renderLeft();renderSummary();renderHeadcount();
+      // シフトの移動・リサイズを保存（確定として残す）
+      if(type==='move'||type==='resize'){
+        const shx=getShifts(dragState.sid,dragState.dkey).find(x=>x.id===dragState.shid);
+        if(shx){ shx.manual=true; const dk2=dragState.dkey; saveShiftsToDb(dk2, true).then(()=>showToast('保存しました ✓','success')).catch(()=>{}); }
+      }
     }
   }
   dragState=null;dragMoved=false;
@@ -1893,7 +1898,8 @@ function saveModal(){
   sh.end=hm2m(document.getElementById('modalEnd').value);
   sh.pos=document.getElementById('modalPos').value;
   sh.note=document.getElementById('modalNote').value;
-  const mm=document.getElementById('modalManual'); if(mm) sh.manual=mm.checked;
+  // 編集したシフトは実データとして扱い、必ずDBに保存する（ログアウト・再読込で戻らないように）
+  sh.manual = true;
   // Save colorIdx from current selection
   const selected=document.querySelector('.color-dot.selected');
   if(selected){
@@ -1908,12 +1914,8 @@ function saveModal(){
   // manual(確定/案)の切替で見た目が変わるため全体再描画
   render();
   renderLeft();renderSummary();
-  if(wasManual){
-    // 確定シフトの編集はDBへ保存（閉じても・再読込しても戻らないように）
-    saveShiftsToDb(dkey, true).then(()=>showToast('保存しました ✓','success')).catch(()=>showToast('保存しました（DB反映に失敗）',''));
-  } else {
-    showToast('保存しました（案は「確定」で反映されます）');
-  }
+  // 編集は必ずDBへ保存（閉じても・再読込しても・ログアウトしても戻らないように）
+  saveShiftsToDb(dkey, true).then(()=>showToast('保存しました ✓','success')).catch(()=>showToast('保存しました（DB反映に失敗）',''));
 }
 function deleteShiftModal(){
   if(!modalTarget) return;
@@ -3909,7 +3911,7 @@ function showNotificationPanel(notifs) {
 }
 
 function init(){
-  const BUILD_VER='ver 0712-C（シフト編集の保持修正）';
+  const BUILD_VER='ver 0712-D（編集・移動を確実保存）';
   const bv=document.getElementById('buildVer'); if(bv) bv.textContent=BUILD_VER;
   // 自動更新: SWを登録し、新しいSWが有効化されたらページを1回だけ再読込（全端末に最新を届ける）
   if('serviceWorker' in navigator){
