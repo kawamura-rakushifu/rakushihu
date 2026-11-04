@@ -3326,7 +3326,7 @@ async function submitRequests(){
 // 希望をDBから読み込み、requestData を再構築（管理者・スタッフ共通）
 async function loadRequestsFromDb(){
   try{
-    const rows = await sbFetch('requests?select=*&order=date');
+    const rows = await sbFetchAll('requests?select=*&order=date,id');
     const d2l={};
     ALL_STAFF.forEach(s=>{ if(s.dbId!=null) d2l[s.dbId]=s.id; });
     const fresh={};
@@ -3853,7 +3853,7 @@ async function sendDeadlineReminder(i, manual){
   try {
     const start = `${d.month}-01`, end = `${d.month}-31`;
     // その月に希望を提出済みのスタッフID
-    const reqRows = await sbFetch(`requests?select=staff_id&date=gte.${start}&date=lte.${end}`);
+    const reqRows = await sbFetchAll(`requests?select=staff_id&date=gte.${start}&date=lte.${end}&order=id`);
     const submitted = new Set((reqRows||[]).map(r=>r.staff_id));
     // 全スタッフ
     const staffRows = await sbFetch('staff?select=id');
@@ -7570,6 +7570,17 @@ async function sbFetch(path, method='GET', body=null) {
   }
   const txt = await res.text();
   return txt ? JSON.parse(txt) : [];
+}
+
+// 全件の読み込み：Supabase は1回に返す行数に上限（既定 1000）があるため、空が返るまで続けて読む（上限の値に関係なく抜けない。並びは id まで指定して重複・抜けを防ぐ）
+async function sbFetchAll(path){
+  const all=[];
+  for(let off=0,n=0;n<1000;n++){
+    const rows=await sbFetch(path+'&limit=1000&offset='+off);
+    if(!Array.isArray(rows)||!rows.length) break;
+    all.push(...rows); off+=rows.length;
+  }
+  return all;
 }
 
 // ============ PUSH NOTIFICATION ============
