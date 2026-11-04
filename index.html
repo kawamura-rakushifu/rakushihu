@@ -615,6 +615,11 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
           <div style="font-size:15px;font-weight:700">希望シフト一覧</div>
           <button class="btn btn-primary btn-sm" onclick="approveAll()">すべて承認</button>
         </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+          <button class="btn btn-sm" id="reqMonthPrev" onclick="reqMonthShift(-1)">◀ 前月</button>
+          <div id="reqMonthLabel" style="font-size:14px;font-weight:700;min-width:96px;text-align:center"></div>
+          <button class="btn btn-sm" id="reqMonthNext" onclick="reqMonthShift(1)">翌月 ▶</button>
+        </div>
         <div class="req-grid" id="reqGrid"></div>
       </div>
     </div>
@@ -2016,7 +2021,20 @@ function renderNowLine(){
 }
 
 // ============ REQUEST PANEL ============
+// 表示する月（'YYYY-MM'）：初期は当月。表示を絞るだけで、希望のデータ・承認・保存の処理は変えない（過去の月も前月で確認できる）
+let reqViewMonth=null;
+function reqMonthKey(){
+  if(!reqViewMonth){ const n=new Date(rsNowEpoch()); reqViewMonth=n.getFullYear()+'-'+String(n.getMonth()+1).padStart(2,'0'); }
+  return reqViewMonth;
+}
+function reqMonthShift(delta){
+  const [y,m]=reqMonthKey().split('-').map(Number); const d=new Date(y,m-1+delta,1);
+  reqViewMonth=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+  renderRequestPanel();
+}
 function renderRequestPanel(){
+  const mk=reqMonthKey(), [my,mm]=mk.split('-').map(Number);
+  const lbl=document.getElementById('reqMonthLabel'); if(lbl) lbl.textContent=`${my}年${mm}月`;
   const staff=ALL_STAFF.filter(s=>s.store===currentStore);
   const grid=document.getElementById('reqGrid');
   let hasAny=false;
@@ -2025,6 +2043,7 @@ function renderRequestPanel(){
     Object.keys(requestData).forEach(key=>{
       if(!key.startsWith(s.id+'_')) return;
       const d=key.split('_')[1];
+      if(String(d).slice(0,7)!==mk) return;   // 表示する月の希望だけ（件数・未確認の数もこの月で数える）
       requestData[key].forEach(r=>reqs.push({...r,date:d}));
     });
     if(!reqs.length) return '';
@@ -2034,7 +2053,7 @@ function renderRequestPanel(){
     return `<div class="req-card">
       <div class="req-card-head">
         <div class="avatar" style="background:${bg};color:${fg};width:28px;height:28px;font-size:10px">${s.name.charAt(0)}</div>
-        <div style="flex:1"><div style="font-size:12px;font-weight:600">${s.name}</div><div style="font-size:10px;color:var(--gray400)">${s.role}</div></div>
+        <div style="flex:1"><div style="font-size:12px;font-weight:600">${s.name}</div><div style="font-size:10px;color:var(--gray400)">${s.role}・${mm}月の希望 ${reqs.length}件</div></div>
         ${pendingCnt>0?`<span style="font-size:10px;background:var(--amber-light);color:var(--amber);border-radius:4px;padding:2px 8px;font-weight:600">未確認 ${pendingCnt}</span>`:''}
         <button class="btn btn-sm" style="font-size:10px;padding:3px 8px" onclick="approveStaff(${s.id})">承認</button>
       </div>
@@ -2051,32 +2070,60 @@ function renderRequestPanel(){
       </div>
     </div>`;
   }).join('');
-  grid.innerHTML=hasAny?html:`<div class="no-req">📭 希望提出はまだありません</div>`;
+  grid.innerHTML=hasAny?html:`<div class="no-req">📭 ${my}年${mm}月の希望提出はまだありません</div>`;
 }
 
-function approveStaff(sid){
-  let skipped=0;
+// 承認は表示中の月（reqMonthKey）の希望だけ。ほかの月の承認状態は変えない。承認の前に対象の年月と件数を確認する
+function reqPendingCount(sid,mk){
+  let n=0;
+  Object.keys(requestData).forEach(key=>{
+    if(!key.startsWith(sid+'_')||key.split('_')[1].slice(0,7)!==mk) return;
+    requestData[key].forEach(r=>{ if(r.status==='pending') n++; });
+  });
+  return n;
+}
+function approveStaffMonth(sid,mk){
+  let skipped=0, done=0;
   Object.keys(requestData).forEach(key=>{
     if(!key.startsWith(sid+'_')) return;
+    const dkey=key.split('_')[1];
+    if(dkey.slice(0,7)!==mk) return;   // 表示中の月の希望だけ
     requestData[key].forEach(r=>{
       if(r.status==='pending'){
         // copy to shiftData
-        const dkey=key.split('_')[1];
         if(rsSelfHit(sid,dkey,r.start,r.end)){ skipped++; return; }   // 今の勤務と時間が重なる希望は承認しない（U6。未承認のまま残す）
-        r.status='approved';
+        r.status='approved'; done++;
         const arr=getShifts(sid,dkey);
         arr.push({id:shiftIdCnt++,start:r.start,end:r.end,pos:r.pos||'ホール',colorIdx:1,note:r.note||''});
         setShifts(sid,dkey,arr);
       }
     });
   });
+  return {done,skipped};
+}
+function approveDoneToast(done,skipped,label){
   renderRequestPanel();render();
-  if(skipped) showToast(`希望を承認しました。${skipped}件は今の勤務と時間が重なるため承認していません（未承認のまま）`,'error',6000);
-  else showToast('希望を承認しました ✓','success');
+  if(skipped) showToast(`${label}の希望を${done}件承認しました。${skipped}件は今の勤務と時間が重なるため承認していません（未承認のまま）`,'error',6000);
+  else showToast(`${label}の希望を${done}件承認しました ✓`,'success');
+}
+async function approveStaff(sid){
+  const mk=reqMonthKey(), [y,m]=mk.split('-').map(Number), label=`${y}年${m}月`;
+  const s=ALL_STAFF.find(x=>x.id===sid), n=reqPendingCount(sid,mk);
+  if(!n){ showToast(`${label}の未確認の希望はありません`); return; }
+  if(!await askConfirm('希望の承認',`${rsEsc(s?s.name:'')}さんの <b>${label}</b> の未確認の希望 <b>${n}件</b> を承認します。<br>ほかの月の希望は変わりません。`,'承認する')) return;
+  const r=approveStaffMonth(sid,mk);
+  approveDoneToast(r.done,r.skipped,label);
 }
 
-function approveAll(){
-  ALL_STAFF.forEach(s=>approveStaff(s.id));
+async function approveAll(){
+  const mk=reqMonthKey(), [y,m]=mk.split('-').map(Number), label=`${y}年${m}月`;
+  const staff=ALL_STAFF.filter(s=>s.store===currentStore&&reqPendingCount(s.id,mk)>0);   // 表示中の店舗・月の一覧と同じ範囲
+  const n=staff.reduce((t,s)=>t+reqPendingCount(s.id,mk),0);
+  if(!n){ showToast(`${label}の未確認の希望はありません`); return; }
+  if(!await askConfirm('希望の承認（すべて）',`${rsEsc(getStoreName(currentStore))}の <b>${label}</b> の未確認の希望 <b>${n}件</b>（${staff.length}人）を承認します。<br>ほかの月・ほかの店舗の希望は変わりません。`,'すべて承認する')) return;
+  let done=0, skipped=0;
+  staff.forEach(s=>{ const r=approveStaffMonth(s.id,mk); done+=r.done; skipped+=r.skipped; });
+  approveDoneToast(done,skipped,label);
 }
 
 // ============ DRAG ============
