@@ -432,6 +432,19 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
 ::-webkit-scrollbar{width:4px;height:4px}
 ::-webkit-scrollbar-thumb{background:var(--gray200);border-radius:4px}
 .shift-bar.emp-fixed{border:2px solid #1E3A8A!important;box-shadow:inset 4px 0 0 #1E3A8A}
+/* 画面内に収め、長い編集内容はダイアログ内でスクロールする。 */
+.modal-overlay{display:flex;align-items:center;justify-content:center;padding:calc(12px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left))}
+.modal-overlay .modal{position:relative;left:auto !important;right:auto !important;top:auto !important;bottom:auto !important;max-width:100%;max-height:calc(100vh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;max-height:calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;overflow:auto;overscroll-behavior:contain}
+.modal-overlay .modal-title,.modal-overlay .modal-footer{flex-shrink:0}
+.modal-overlay .modal-footer{position:sticky;bottom:-22px;z-index:1;flex-wrap:wrap;background:#fff;padding:10px 0 22px;margin-bottom:-22px}
+@media (max-width:768px){
+  .modal-overlay{align-items:flex-end}
+  .modal-overlay .modal{width:100% !important}
+}
+/* 高さが極端に小さいときは、操作欄も一緒にスクロールして入力欄を隠さない。 */
+@media (max-height:360px){
+  .modal-overlay .modal-footer{position:static;padding-bottom:0;margin-bottom:0}
+}
 </style>
 </head>
 <body>
