@@ -51,6 +51,26 @@
   const weekKey = date => { const d = new Date(date + 'T00:00:00'); const w = d.getDay(); d.setDate(d.getDate() - (w === 0 ? 6 : w - 1)); return ymd(d); }; // 月曜始まり
   const breaksOf = sh => (sh.breaks || []).reduce((n, b) => n + b.end - b.start, 0);
 
+function rsMergeIntervals(rows){
+  const out=[];
+  (rows||[]).filter(r=>Number.isFinite(r.start)&&Number.isFinite(r.end)&&r.end>r.start).map(r=>({start:r.start,end:r.end})).sort((a,b)=>a.start-b.start||a.end-b.end).forEach(r=>{
+    const last=out[out.length-1];if(last&&r.start<=last.end)last.end=Math.max(last.end,r.end);else out.push(r);
+  });return out;
+}
+function rsNormalizeMandatoryBreaks(start,end,breaks,window){
+  const current=rsMergeIntervals((breaks||[]).map(b=>({start:Math.max(start,b.start),end:Math.min(end,b.end)})));
+  if(!window||end<=window.start||start>=window.end)return current;
+  const required={start:Math.max(start,window.start),end:Math.min(end,window.end)};
+  const len=end-start, legal=[0,45,60].find(b=>!((len-b>360&&b<45)||(len-b>480&&b<60)))??60;
+  // 15〜17時だけでは法定の最低に足りない勤務は、既存の追加休憩も残す。
+  if(required.end-required.start>=legal)return [required];
+  const combined=rsMergeIntervals(current.concat(required));
+  if(combined.reduce((n,b)=>n+b.end-b.start,0)>=legal)return combined;
+  const st=Math.max(start,Math.min(required.start,end-legal));
+  return rsMergeIntervals(combined.concat({start:st,end:st+legal}));
+}
+  function policyBreaks(ctx,sh){const w=(ctx.input.breakWindows||{})[sh.date];return w?rsNormalizeMandatoryBreaks(sh.start,sh.end,sh.breaks||[],w):(sh.breaks||[]);}
+
   function prepare(input) {
     const opt = Object.assign({}, DEFAULTS, input.options || {});
     const compatMap = input.compat || {};
@@ -323,7 +343,7 @@
     const out = [];
     dayShifts.forEach(sh => {
       if (!(sh.start <= t && sh.end >= t + SLOT)) return;
-      if ((sh.breaks || []).some(b => b.start < t + SLOT && b.end > t)) return; // 休憩中は数えない
+      if (policyBreaks(ctx,sh).some(b => b.start < t + SLOT && b.end > t)) return; // 指定休憩・休憩中は数えない
       const s = ctx.staffById.get(sh.staffId); if (!s) return;
       out.push({ s, lock: sh.lock || null });
     });
@@ -1020,7 +1040,10 @@
     const isEmpShift = sh => sh.source === 'employee' || sh.source === 'confirmed';
     const gapOverlap = (b, bm) => gaps.reduce((n, g) => n + Math.max(0, Math.min(b + bm, g.end) - Math.max(b, g.start)), 0);
     const placeBreaks = (reopt) => {
+      shifts.forEach(sh=>{if((inp.breakWindows||{})[date])sh.breaks=policyBreaks(ctx,sh);});
       shifts.filter(sh => sh.source !== 'locked' && (reopt ? (sh.breaks || []).length : !(sh.breaks || []).length)).forEach(sh => {
+        const window=(inp.breakWindows||{})[date];
+        if(window&&sh.start<window.end&&sh.end>window.start)return; // 全スタッフ共通の固定休憩は動かさない
         const bm = sh.breakMin != null ? sh.breakMin : breakMinutes(ctx, sh.end - sh.start);   // 社員は設定の休憩時間
         if (!bm) return;
         if (isEmpShift(sh)) {
@@ -1128,6 +1151,8 @@
     if (evCache.cost > 0) { extend(); greedy(); trim(); placeBreaks(); }
     if (evCache.cost > 0) placeBreaks(true);
     otExtend();
+    shifts.forEach(sh=>{if((inp.breakWindows||{})[date])sh.breaks=policyBreaks(ctx,sh);});
+    evCache=evaluateDay(ctx,date,shifts,dem);
     empBreakIssues(ctx, date, shifts.filter(isEmpShift), shifts, dem, false).forEach(w => warnings.push(w));
     shifts.forEach(sh => {
       if (sh.source === 'locked') return;

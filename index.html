@@ -463,6 +463,16 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
 .toast-close,.toast-action{pointer-events:auto;flex:0 0 auto;min-width:36px;min-height:36px;margin:0;padding:4px;border:1px solid currentColor;border-radius:6px;background:transparent;color:inherit;font:inherit;cursor:pointer}
 .toast-close{font-size:22px;line-height:1}
 .toast-close:focus-visible,.toast-action:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+/* 希望との差は表示だけ。削除・再計算・勤務の書換えは行わない。 */
+.rs-gap-summary{font:inherit;cursor:pointer;min-height:36px;color:#9f1239;background:#fff1f2;border:1px solid #fda4af;white-space:nowrap}
+.rs-gap-staff{background:#fff1f2;border-left:3px solid #e11d48}
+.rs-gap-staff .rs-gap-role{color:#9f1239!important;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rs-gap-cell{box-sizing:border-box;position:absolute;pointer-events:none;z-index:11;border:2px solid #e11d48;background:repeating-linear-gradient(135deg,rgba(225,29,72,.08) 0 4px,transparent 4px 8px)}
+.rs-gap-cell.partial{border-color:#d97706;background:rgba(245,158,11,.08)}
+.rs-gap-cell span{position:absolute;left:1px;bottom:0;max-width:100%;font-size:10px;line-height:12px;font-weight:700;color:#9f1239;background:#fff1f2;white-space:nowrap}
+.rs-gap-cell.partial span{color:#92400e;background:#fffbeb}
+.rs-gap-detail{padding:8px;margin:6px 0;border-left:3px solid #e11d48;background:#fff1f2;font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+.rs-gap-detail.partial{border-color:#d97706;background:#fffbeb}
 </style>
 </head>
 <body>
@@ -1056,7 +1066,7 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
     <div class="field" id="modalBreakField"><label class="field-label">休憩</label>
       <div id="modalBreaks"></div>
       <button type="button" class="btn btn-sm" id="modalBreakAdd" style="font-size:12px;min-height:36px" onclick="modalAddBreakRow()">＋ 休憩を追加</button>
-      <div style="font-size:10px;color:var(--gray400);margin-top:3px;line-height:1.5">法定の最低：実働6時間超は45分・8時間超は60分。社員の基本は 14:00〜17:00 に連続120分</div>
+      <div style="font-size:10px;color:var(--gray400);margin-top:3px;line-height:1.5">平日15:00〜17:00は固定休憩（勤務と重なる部分・12月以降）。法定の最低休憩も守ります。土日祝の社員は14:00〜17:00に連続120分が基本です</div>
     </div>
     <div class="field"><label class="field-label">ポジション</label>
       <select id="modalPos" onchange="onModalPosChange()">
@@ -1129,7 +1139,7 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
     </div>
   </div>
 </div>
-<script src="autofill2.js?v=20261103"></script>
+<script src="autofill2.js?v=20261122-breaks"></script>
 <script src="autosched.js?v=20261103"></script>
 <script src="holidays.js?v=20261103"></script>
 
@@ -1194,11 +1204,111 @@ function setShiftsRaw(sid,d,a){shiftData[`${sid}_${d}`]=a}   // DBからの読�
 let breakData={};
 // 画面で削除したがまだDBに反映していないシフトのDB行ID: deletedShiftRows[`${sid}_${dk}`] = [rowId,...]
 let deletedShiftRows={};
-function getBreaks(sid,d){return breakData[`${sid}_${d}`]||[]}
+function getBreaks(sid,d){rsEnsurePolicyBreaks(sid,d);return breakData[`${sid}_${d}`]||[]}
 function setBreaks(sid,d,a){breakData[`${sid}_${d}`]=a}
 function calcBreakH(sid,d){return getBreaks(sid,d).reduce((s,b)=>s+(b.end-b.start)/60,0)}
 
 function getRequests(sid,d){return requestData[`${sid}_${d}`]||[]}
+// BEGIN shift visibility and weekday break helpers
+let rsRequestSavedRows=[],rsRequestReadReady=false,rsRequestSending=false;
+function rsMergeIntervals(rows){
+  const out=[];
+  (rows||[]).filter(r=>Number.isFinite(r.start)&&Number.isFinite(r.end)&&r.end>r.start).map(r=>({start:r.start,end:r.end})).sort((a,b)=>a.start-b.start||a.end-b.end).forEach(r=>{
+    const last=out[out.length-1];if(last&&r.start<=last.end)last.end=Math.max(last.end,r.end);else out.push(r);
+  });return out;
+}
+
+function rsNormalizeMandatoryBreaks(start,end,breaks,window){
+  const current=rsMergeIntervals((breaks||[]).map(b=>({start:Math.max(start,b.start),end:Math.min(end,b.end)})));
+  if(!window||end<=window.start||start>=window.end)return current;
+  const required={start:Math.max(start,window.start),end:Math.min(end,window.end)};
+  const len=end-start, legal=[0,45,60].find(b=>!((len-b>360&&b<45)||(len-b>480&&b<60)))??60;
+  // 15〜17時だけでは法定の最低に足りない勤務は、既存の追加休憩も残す。
+  if(required.end-required.start>=legal)return [required];
+  const combined=rsMergeIntervals(current.concat(required));
+  if(combined.reduce((n,b)=>n+b.end-b.start,0)>=legal)return combined;
+  const st=Math.max(start,Math.min(required.start,end-legal));
+  return rsMergeIntervals(combined.concat({start:st,end:st+legal}));
+}
+
+function rsRequestDifference(requests,shifts){
+  const wanted=rsMergeIntervals(requests),assigned=rsMergeIntervals(shifts);if(!wanted.length)return null;
+  let missing=wanted;
+  for(const a of assigned)missing=missing.flatMap(r=>a.end<=r.start||a.start>=r.end?[r]:[{start:r.start,end:Math.min(r.end,a.start)},{start:Math.max(r.start,a.end),end:r.end}].filter(x=>x.end>x.start));
+  if(!missing.length)return null;
+  return {kind:assigned.length?'partial':'unplaced',wanted,assigned,missing,minutes:missing.reduce((n,x)=>n+x.end-x.start,0)};
+}
+
+function rsWeekdayBreakWindow(date){
+  if(date<'2026-12-01')return null;
+  const day=new Date(date+'T00:00:00').getDay();if(day===0||day===6)return null;
+  const holiday=window.RakuHolidays&&RakuHolidays.info(date);
+  return holiday&&holiday.known&&!holiday.holiday?{start:900,end:1020}:null;
+}
+
+function rsPolicyBreakRows(sid,date,rows){
+  const window=rsWeekdayBreakWindow(date);if(!window)return rows;
+  const shifts=getShifts(sid,date), changed=shifts.some(sh=>sh.start<window.end&&sh.end>window.start);
+  if(!changed)return rows;
+  const result=rsMergeIntervals(shifts.flatMap(sh=>rsNormalizeMandatoryBreaks(sh.start,sh.end,rows.filter(b=>b.start<sh.end&&b.end>sh.start),window)));
+  return result.map(b=>{const old=rows.find(x=>x.start===b.start&&x.end===b.end);return old||{id:shiftIdCnt++,start:b.start,end:b.end,isBreak:true,note:'平日固定休憩'};});
+}
+
+function rsEnsurePolicyBreaks(sid,date){
+  const key=sid+'_'+date, current=breakData[key]||[], next=rsPolicyBreakRows(sid,date,current);
+  if(JSON.stringify(current.map(x=>[x.start,x.end]))!==JSON.stringify(next.map(x=>[x.start,x.end])))breakData[key]=next;
+}
+
+function rsRequestGapRows(staff=getStaff(),dates=getDates()){
+  const out=[];
+  staff.forEach(s=>dates.forEach(day=>{
+    const date=typeof day==='string'?day:dk(day);
+    if(shiftStoreOf(s,date)!==currentStore||staffOffDates(s,date.slice(0,7)).includes(date))return;
+    const diff=rsRequestDifference(getRequests(s.id,date),boardShifts(s,date));
+    if(diff)out.push(Object.assign({s,date},diff));
+  }));return out;
+}
+
+function rsRequestGapLabel(rows){
+  const u=rows.filter(x=>x.kind==='unplaced').length,p=rows.length-u;
+  return [u?'未配置'+u+'日':'',p?'希望差'+p+'日':''].filter(Boolean).join('・');
+}
+
+function rsRequestGapChip(staff,dates){
+  const rows=rsRequestGapRows(staff,dates);if(!rows.length)return '';
+  const u=new Set(rows.filter(x=>x.kind==='unplaced').map(x=>x.s.id)).size,p=new Set(rows.filter(x=>x.kind==='partial').map(x=>x.s.id)).size;
+  return `<button type="button" class="chip rs-gap-summary" onclick="rsOpenRequestGaps()" title="希望時間とシフトの差を確認。人数過多とは限りません">⚠ ${u?'未配置 '+u+'人':''}${u&&p?'・':''}${p?'希望差 '+p+'人':''}</button>`;
+}
+
+function rsOpenRequestGaps(){
+  const rows=rsRequestGapRows(),times=list=>list.length?list.map(x=>fmt(x.start)+'〜'+fmt(x.end)).join('、'):'配置なし';
+  document.getElementById('pvTitle').textContent='希望とシフトの差';
+  document.getElementById('pvBody').innerHTML='<p style="font-size:12px">赤＝勤務なし、橙＝希望時間の一部が未配置。人数過多だけでなく勤務条件なども理由になります。休憩・休み希望・他店舗勤務は差に含めません。</p>'+
+    (rows.map(r=>`<div class="rs-gap-detail ${r.kind}"><b>${rsEsc(r.s.name)}　${rsEsc(af2DateLabel(r.date))}　${r.kind==='unplaced'?'未配置':'希望差'}</b><div>希望：${rsEsc(times(r.wanted))}</div><div>配置：${rsEsc(times(r.assigned))}</div><div>未配置の時間：${rsEsc(times(r.missing))}</div></div>`).join('')||'<p>表示期間に希望とシフトの差はありません。</p>');
+  document.getElementById('pvFoot').innerHTML='<button type="button" class="btn btn-sm" onclick="closePreviewPanel()">閉じる</button>';
+  document.getElementById('pvOverlay').classList.add('show');
+}
+
+function rsRequestGapCell(gap,left,width,top,height){
+  if(!gap)return '';
+  return `<div class="rs-gap-cell ${gap.kind}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px" data-gap-kind="${gap.kind}" title="${gap.kind==='unplaced'?'希望あり・未配置':'希望時間の一部が未配置'}"><span>${gap.kind==='unplaced'?'未配置':'希望差'}</span></div>`;
+}
+
+function rsRequestRowsSig(rows){
+  return JSON.stringify((rows||[]).map(r=>[r.date,+r.start_min,+r.end_min,r.pos||'ホール',r.note||'']).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))));
+}
+
+function rsLocalRequestRows(month){
+  const out=[];Object.entries(requestData).forEach(([key,items])=>{
+    const at=key.indexOf('_'),id=+key.slice(0,at),date=key.slice(at+1);
+    if(id!==currentStaffId||date.slice(0,7)!==month)return;
+    items.forEach(r=>out.push({staff_id:currentStaffDbId,date,start_min:r.start,end_min:r.end,pos:r.pos||'ホール',note:r.note||'',status:'pending'}));
+  });return out;
+}
+
+
+// END shift visibility and weekday break helpers
+
 // ===== スタッフ画面 表示モード（希望提出 / 確定シフト）=====
 let staffViewMode='request';          // 'request' | 'confirmed' | 'all'
 let allDayShifts={};                   // dkey -> [{name,start,end,pos,colorIdx}]（みんなのシフト用）
@@ -1346,7 +1456,7 @@ async function doStaffLogin(){
     if(!passcode){document.getElementById('staffErr').textContent='パスコードが登録されていません。店長に連絡してください';staffPin='';updateDots('sp','');return;}
     if(staffPin!==passcode){document.getElementById('staffErr').textContent='パスコードが正しくありません';staffPin='';updateDots('sp','');return;}
   }
-  currentStaffId=sid;
+  currentStaffId=sid; currentStaffDbId=null; rsRequestReadReady=false; rsRequestSavedRows=[];
   document.getElementById('staffNameBadge').textContent=s.name;
   showScreen('staffScreen');
   setStaffViewMode('request');
@@ -1821,6 +1931,7 @@ function renderSummary(){
   let shortageCount=0, gridUnset=!rsNeedGridOk(currentStore);
   if(currentView==='day'&&!gridUnset){ const c=rsDayCheck(currentStore,dk(dates[0])); if(c) shortageCount=c.need; }
   document.getElementById('summaryChips').innerHTML=`
+    ${rsRequestGapChip(staff,dates)}
     <div class="chip">総労働 <b>${fmtH(totalH)}h</b></div>
     <div class="chip">出勤 <b>${wc}人</b></div>
     ${pending>0?`<div class="chip alert">未確認希望 <b>${pending}件</b></div>`:''}
@@ -1993,22 +2104,23 @@ function renderTimeline(){
       </div>`;
       return;
     }
-    const s=row.s;
+    const s=row.s, gapRows=rsRequestGapRows([row.s],dates), gapLabel=rsRequestGapLabel(gapRows);
     const [sbg,sfg]=AV_COLORS[s.id%AV_COLORS.length];
     const hrs=fmtH(calcWeekH(s.id));
     const hasReq=getDates().some(d=>getRequests(s.id,dk(d)).some(r=>r.status==='pending'));
-    html+=`<div class="staff-label" style="width:${timelineNameWidth()}px;top:${top}px;height:${ROW_H}px">
+    html+=`<div class="staff-label${gapRows.length?' rs-gap-staff':''}" data-rs-gap-staff="${gapRows.length?s.id:''}" title="${rsEsc(gapLabel)}" style="width:${timelineNameWidth()}px;top:${top}px;height:${ROW_H}px">
       <div class="avatar" style="background:${sbg};color:${sfg};width:24px;height:24px;font-size:9px;flex-shrink:0">${s.name.charAt(0)}</div>
       <div style="flex:1;min-width:0">
         <div style="font-size:11px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.name}</div>
-        <div style="font-size:9px;color:var(--gray400)">${s.role}</div>
+        <div class="rs-gap-role" style="font-size:9px;color:var(--gray400)">${gapLabel?'⚠ '+rsEsc(gapLabel):s.role}</div>
       </div>
       ${hasReq?`<div style="width:6px;height:6px;border-radius:50%;background:var(--amber);flex-shrink:0"></div>`:''}
       <div style="font-size:10px;color:var(--gray600);font-weight:500;flex-shrink:0">${hrs}h</div>
     </div>`;
     html+=`<div class="grid-row" style="top:${top}px;height:${ROW_H}px;left:${timelineNameWidth()}px;right:0;position:absolute" data-sid="${s.id}" onmousedown="onRowMD(event,${s.id})" ontouchstart="onRowTouchStart(event,${s.id})"></div>`;
     if(isSingle){
-      const d=dates[0],dkey=dk(d);
+      const d=dates[0],dkey=dk(d), gap=gapRows.find(r=>r.date===dkey);
+      if(gap){const left=timelineNameWidth()+Math.max(0,m2px(Math.max(T_START*60,gap.missing[0].start)));html+=rsRequestGapCell(gap,left,Math.max(8,Math.min(twPx(),m2px(gap.missing[gap.missing.length-1].end))-(left-timelineNameWidth())),top,ROW_H);}
       getRequests(s.id,dkey).forEach(r=>{
         const x=timelineNameWidth()+m2px(r.start),w=m2px(r.end)-m2px(r.start);
         html+=`<div class="request-bar" style="left:${x}px;width:${Math.max(8,w)}px;top:${top+BAR_TOP}px;height:${BAR_H}px;border-color:#D97706;background:#FFFBEB;color:#D97706" title="希望: ${fmt(r.start)}-${fmt(r.end)}">${r.pos||'希望'} ${fmt(r.start)}-${fmt(r.end)}</div>`;
@@ -2026,6 +2138,7 @@ function renderTimeline(){
     } else {
       dates.forEach((d,di)=>{
         const dkey=dk(d);
+        html+=rsRequestGapCell(gapRows.find(r=>r.date===dkey),timelineNameWidth()+di*colW,colW,top,ROW_H);
         boardShifts(s,dkey).forEach(sh=>{
           const bw=colW-4,tot=(T_END-T_START)*60;
           const sr=(sh.start-T_START*60)/tot,er=(sh.end-T_START*60)/tot;
@@ -3326,6 +3439,7 @@ function applyPreset(start,end){
 }
 
 function selectCalDay(dkey,label){
+  if(!rsRequestReadReady){showToast('希望を読み込み中です。少し待ってから入力してください');return;}
   selectedCalDay=dkey;
   document.getElementById('reqFormDate').textContent=label;
   document.getElementById('reqFormCard').style.display='block';
@@ -3380,37 +3494,47 @@ function addRequest(){
 }
 
 async function submitRequests(){
-  if(currentStaffDbId==null){ showToast('提出にはログインが必要です'); return; }
-  showToast('提出中...');
+  if(currentStaffDbId==null){showToast('提出にはログインが必要です','error');return;}
+  if(!rsRequestReadReady){showToast('希望を読み込み中です。読み込みが終わってから提出してください','error');return;}
+  if(rsRequestSending)return;
+  const month=staffMonthDate.getFullYear()+'-'+String(staffMonthDate.getMonth()+1).padStart(2,'0'),rows=rsLocalRequestRows(month);
+  if(!rows.length){showToast(month+' の勤務希望は0件です。対象月と希望の入力を確認してください。休み希望は別に保存されています','',7000);return;}
+  const ownerId=currentStaffDbId,localId=currentStaffId;
+  rsRequestSending=true;updateStaffReqCount();showToast(month+' の希望を保存・確認中…','',0);
   try{
-    // このスタッフの既存希望を一旦削除して、現在の内容で入れ直す（004g：スタッフのトークンで1回の処理）
-    const rows=[];
-    Object.keys(requestData).forEach(key=>{
-      const idx=key.indexOf('_');
-      const sid=+key.slice(0,idx);
-      const date=key.slice(idx+1);
-      if(sid===currentStaffId){
-        requestData[key].forEach(r=>rows.push({
-          staff_id: currentStaffDbId, date: date, start_min: r.start, end_min: r.end,
-          pos: r.pos||'ホール', note: r.note||'', status: 'pending'
-        }));
-      }
-    });
-    if(rsStaffSession) await rsStaffRpc('staff_requests_replace',{p_rows:rows.map(({staff_id,...r})=>r)});
-    else { await sbFetch('requests?staff_id=eq.'+currentStaffDbId, 'DELETE'); if(rows.length) await sbFetch('requests','POST',rows); }
-    showToast('希望を提出しました！管理者に反映されます ✓','success');
+    const path='requests?staff_id=eq.'+ownerId+'&select=id,staff_id,date,start_min,end_min,pos,note,status&order=date,id';
+    const remote=await sbFetchAll(path),before=remote.filter(r=>r.date.slice(0,7)===month),saved=rsRequestSavedRows.filter(r=>r.date.slice(0,7)===month);
+    if(rsRequestRowsSig(before)!==rsRequestRowsSig(saved))throw new Error('他の端末で希望が変更されています。入力内容を控えてから再読み込みしてください');
+    if(currentStaffId!==localId||currentStaffDbId!==ownerId)throw new Error('ログインが切り替わったため保存を中止しました');
+    if(rsStaffSession){
+      const combined=remote.filter(r=>r.date.slice(0,7)!==month).concat(rows);
+      await rsStaffRpc('staff_requests_replace',{p_rows:combined.map(r=>({date:r.date,start_min:r.start_min,end_min:r.end_min,pos:r.pos||'ホール',note:r.note||'',status:r.status||'pending'}))});
+    }else{
+      const unused=before.slice(),insert=[];
+      for(const row of rows){const n=unused.findIndex(r=>rsRequestRowsSig([r])===rsRequestRowsSig([row]));if(n>=0)unused.splice(n,1);else insert.push(row);}
+      // 新しい希望を保存してから不要な旧行を消す。保存失敗時に既存の希望を失わない。
+      if(insert.length)await sbFetch('requests','POST',insert);
+      if(unused.length)await sbFetch('requests?staff_id=eq.'+ownerId+'&id=in.('+unused.map(r=>r.id).join(',')+')','DELETE');
+    }
+    const verifiedAll=await sbFetchAll(path),verified=verifiedAll.filter(r=>r.date.slice(0,7)===month);
+    if(rsRequestRowsSig(verified)!==rsRequestRowsSig(rows))throw new Error('保存後の内容が一致しません。成功扱いにはしていません。入力を残しているので管理者へ連絡してください');
+    if(currentStaffId!==localId||currentStaffDbId!==ownerId)return;
+    rsRequestSavedRows=verifiedAll;
+    Object.keys(requestData).filter(k=>k.startsWith(localId+'_')&&k.slice(k.indexOf('_')+1).slice(0,7)===month).forEach(k=>delete requestData[k]);
+    verified.forEach(r=>{const k=localId+'_'+r.date;(requestData[k]=requestData[k]||[]).push({id:r.id,start:r.start_min,end:r.end_min,pos:r.pos||'ホール',note:r.note||'',status:r.status||'pending'});});
+    renderCalendar();renderMyReqList();updateStaffReqCount();
+    showToast(month+' の勤務希望 '+verified.length+'件を保存し、読み直して確認しました ✓','success',6000);
   }catch(e){
-    console.error('submitRequests error:', e);
-    if(/staff login required/.test(String(e&&e.message||e))){ showToast('ログインの有効期限が切れました。ログインし直してから提出してください','error'); return; }
-    if(rsPassDenied(e)){ showToast('提出できませんでした。画面を再読み込みして、ログインし直してから提出してください','error'); return; }   // ログイン中に 004g が適用された画面など
-    showToast('提出に失敗しました（希望テーブル未作成の可能性）','error');
-  }
+    console.error('submitRequests error:',e);
+    showToast('提出を確認できませんでした。入力は残しています。'+String(e&&e.message||e),'error',9000);
+  }finally{rsRequestSending=false;updateStaffReqCount();}
 }
 
 // 希望をDBから読み込み、requestData を再構築（管理者・スタッフ共通）
 async function loadRequestsFromDb(){
   try{
     const rows = await sbFetchAll('requests?select=*&order=date,id');
+    if(!Array.isArray(rows))throw new Error('希望データを読み込めませんでした');
     const d2l={};
     ALL_STAFF.forEach(s=>{ if(s.dbId!=null) d2l[s.dbId]=s.id; });
     const fresh={};
@@ -3423,8 +3547,10 @@ async function loadRequestsFromDb(){
       });
     });
     requestData = fresh; // DBを正とする
+    if(document.getElementById('staffScreen').classList.contains('active')){rsRequestSavedRows=rows.filter(r=>r.staff_id===currentStaffDbId);rsRequestReadReady=true;}
     return true;
   }catch(e){
+    rsRequestReadReady=false;
     console.log('loadRequests error (希望テーブル未作成?):', e&&e.message?e.message:e);
     return false;
   }
@@ -3462,12 +3588,11 @@ function deleteMyReq(dkey,rid){
 }
 
 function updateStaffReqCount(){
-  if(!currentStaffId) return;
-  let cnt=0;
-  Object.keys(requestData).forEach(key=>{if(key.startsWith(currentStaffId+'_')) cnt+=requestData[key].length;});
-  const mk=staffMonthDate.getFullYear()+'-'+String(staffMonthDate.getMonth()+1).padStart(2,'0'), offN=myOffDates(mk).length;
-  document.getElementById('staffReqCount').textContent=`提出済み ${cnt}件`+(offN?`・休み希望 ${offN}日`:'');
-  document.getElementById('reqSubmitBadge').textContent=cnt+'件';
+  if(!currentStaffId)return;
+  const mk=staffMonthDate.getFullYear()+'-'+String(staffMonthDate.getMonth()+1).padStart(2,'0'),local=rsLocalRequestRows(mk),saved=rsRequestSavedRows.filter(r=>r.date.slice(0,7)===mk),dirty=rsRequestRowsSig(local)!==rsRequestRowsSig(saved),offN=myOffDates(mk).length;
+  document.getElementById('staffReqCount').textContent=!rsRequestReadReady?'希望を読み込み中…':(dirty?'入力 '+local.length+'件・未送信':'勤務希望 '+saved.length+'件・保存済み')+(offN?'／休み '+offN+'日保存済み':'');
+  document.getElementById('reqSubmitBadge').textContent=local.length+'件'+(dirty?'（未送信）':'');
+  const button=document.getElementById('staffSubmitBtn');if(button){button.textContent=(+mk.slice(5))+'月の希望を提出';button.disabled=!rsRequestReadReady||rsRequestSending;}
 }
 
 // ============ STAFF MANAGEMENT ============
@@ -6390,7 +6515,7 @@ function af2BuildInput(){
   const externalWork={};
   staffList.forEach(s=>dates.forEach(d=>{ if(shiftStoreOf(s,d)===store) return; const sh=getShifts(s.id,d); if(!sh.length) return;
     const mins=sh.reduce((n,x)=>n+x.end-x.start,0)-getBreaks(s.id,d).reduce((n,b)=>n+b.end-b.start,0); (externalWork[s.id]=externalWork[s.id]||[]).push({date:d,minutes:Math.max(0,mins),store:shiftStoreOf(s,d)}); }));
-  return {store,busy,law36:rsLaw36Of(store)?Object.assign({monthMinutes:rsLaw36Of(store).monthMinutes},rsLaw36Of(store).dayMinutes>0?{dayMinutes:rsLaw36Of(store).dayMinutes}:{}):null,dates,skills,compat,staff,hours,closedDates:dates.filter(d=>{ const c=rsClosedDates(store)[d]; return c&&!(c.periods&&c.periods.length); }),dayHours:Object.fromEntries(dates.map(d=>[d,rsHoursOn(store,d)])),rules:rsRules(store),requests,availability,offs,locked,externalWork,needGrid:rsNeedGridOk(store),needGridPartial:rsNeedGridPartial(store),needGridState:rsNeedGridState(store).state,leaderGapMinutes:rsLeaderGapOf(store),
+  return {store,busy,breakWindows:Object.fromEntries(dates.map(date=>[date,rsWeekdayBreakWindow(date)])),law36:rsLaw36Of(store)?Object.assign({monthMinutes:rsLaw36Of(store).monthMinutes},rsLaw36Of(store).dayMinutes>0?{dayMinutes:rsLaw36Of(store).dayMinutes}:{}):null,dates,skills,compat,staff,hours,closedDates:dates.filter(d=>{ const c=rsClosedDates(store)[d]; return c&&!(c.periods&&c.periods.length); }),dayHours:Object.fromEntries(dates.map(d=>[d,rsHoursOn(store,d)])),rules:rsRules(store),requests,availability,offs,locked,externalWork,needGrid:rsNeedGridOk(store),needGridPartial:rsNeedGridPartial(store),needGridState:rsNeedGridState(store).state,leaderGapMinutes:rsLeaderGapOf(store),
     positionNeeds:af2PositionNeeds(store)};
 }
 // 必要人数：店舗別のポジション／メイン担当の条件（必須配置条件）が1件でもあればそちらを使い、
@@ -7132,6 +7257,8 @@ function renderDayList(){
       if(sh.duties&&sh.duties.length) c+=`<div class="dl-sub">担当：${sh.duties.filter(x=>x.kind==='skill').map(x=>(x.label||'').replace(/（.*$/,'')+' '+fmt(x.start)+'〜'+fmt(x.end)).join('／')||'—'}</div>`;
     });
     dels.forEach(sh=>{ c+=`<button class="dl-shift deleted" onclick="restorePubDelete(${s.id},'${dkey}',${sh.id})"><span>${fmt(sh.start)}〜${fmt(sh.end)}</span><span style="flex:1"></span><span class="st">削除予定（タップで取消）</span></button>`; });
+    const gap=rsRequestGapRows([s],[dkey])[0];
+    if(gap)c+=`<div class="rs-gap-detail ${gap.kind}"><b>⚠ ${gap.kind==='unplaced'?'未配置':'希望差'}</b>　未配置の時間：${gap.missing.map(x=>fmt(x.start)+'〜'+fmt(x.end)).join('、')}</div>`;
     const sub=[];
     if(brs.length) sub.push('☕ 休憩 '+brs.map(b=>fmt(b.start)+'〜'+fmt(b.end)).join('、'));
     if(reqs.length) sub.push('📝 希望 '+reqs.map(r=>fmt(r.start)+'〜'+fmt(r.end)).join('、'));
