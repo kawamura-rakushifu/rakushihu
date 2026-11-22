@@ -455,6 +455,14 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
   #adminScreen .date-nav{width:100%;min-width:0}
   #adminScreen .date-label{min-width:0;flex:1}
 }
+/* 通知の表示のみ。勤務・下書きの競合判定は変更しない。 */
+.toast{box-sizing:border-box;width:max-content;max-width:min(560px,calc(100vw - 24px));display:flex;align-items:flex-start;gap:8px;padding:9px 12px}
+.toast:not(.show){visibility:hidden}
+.toast.show{pointer-events:none}
+.toast-text{min-width:0;overflow-wrap:anywhere;max-height:180px;max-height:min(30dvh,180px);overflow-y:auto}
+.toast-close,.toast-action{pointer-events:auto;flex:0 0 auto;min-width:36px;min-height:36px;margin:0;padding:4px;border:1px solid currentColor;border-radius:6px;background:transparent;color:inherit;font:inherit;cursor:pointer}
+.toast-close{font-size:22px;line-height:1}
+.toast-close:focus-visible,.toast-action:focus-visible{outline:2px solid currentColor;outline-offset:2px}
 </style>
 </head>
 <body>
@@ -1081,7 +1089,7 @@ html,body{height:100%;width:100%;overflow:hidden;overflow-x:hidden;font-family:v
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" aria-hidden="true"></div>
 
 <!-- 確認ダイアログ（公開前の確認・削除予定の取り消しなど） -->
 <div class="modal-overlay" id="cfOverlay" style="z-index:200;background:rgba(15,23,42,.35)">
@@ -7591,11 +7599,43 @@ function printShift(){
   </body></html>`);
   win.document.close();
 }
-function showToast(msg,type='',dur=2500){
+function hideToast(){
   const t=document.getElementById('toast');
-  t.textContent=msg;t.className='toast show'+(type?' '+type:'');
+  if(!t) return;
   clearTimeout(t._to);
-  if(dur>0) t._to=setTimeout(()=>t.classList.remove('show'),dur);
+  t.classList.remove('show');
+  t.setAttribute('aria-hidden','true');
+}
+function showToast(msg,type='',dur=2500,details=null){
+  const t=document.getElementById('toast');
+  if(!t) return;
+  clearTimeout(t._to);
+  t.textContent='';
+  t.className='toast show'+(type?' '+type:'');
+  t.setAttribute('role',type==='error'?'alert':'status');
+  t.setAttribute('aria-hidden','false');
+  const message=document.createElement('span');
+  message.className='toast-text';
+  message.textContent=String(msg);
+  t.appendChild(message);
+  if(typeof details==='function'){
+    const more=document.createElement('button');
+    more.type='button';
+    more.className='toast-action';
+    more.textContent='詳細';
+    more.onclick=()=>{ hideToast(); details(); };
+    t.appendChild(more);
+  }
+  const close=document.createElement('button');
+  close.type='button';
+  close.className='toast-close';
+  close.setAttribute('aria-label','通知を閉じる');
+  close.textContent='×';
+  close.onclick=hideToast;
+  t.appendChild(close);
+  // 短い通知は背後の操作を妨げず、長い通知本文だけスクロールを受け取る。
+  if(message.scrollHeight>message.clientHeight) message.style.pointerEvents='auto';
+  if(dur>0) t._to=setTimeout(hideToast,dur);
 }
 
 // ============ INIT ============
@@ -8295,9 +8335,34 @@ function rsRestoreBoardDrafts(){
   return {restored,skipped};
 }
 // 読み込み後の表示（戻したマス・戻さなかったマス）
+function rsBoardDraftConflictDetails(skipped){
+  document.getElementById('pvTitle').textContent='保存した下書きの確認';
+  const body=document.getElementById('pvBody');
+  body.textContent='';
+  const description=document.createElement('p');
+  description.textContent='公開済み勤務を保護するため、次の下書きは戻していません。公開中の内容を表示しています。';
+  body.appendChild(description);
+  const list=document.createElement('ul');
+  skipped.forEach(x=>{
+    const item=document.createElement('li');
+    item.textContent=(x.s?x.s.name+' '+af2DateLabel(x.d):x.d)+'：'+x.why;
+    list.appendChild(item);
+  });
+  body.appendChild(list);
+  const foot=document.getElementById('pvFoot');
+  foot.textContent='';
+  const close=document.createElement('button');
+  close.type='button';
+  close.className='btn btn-sm';
+  close.textContent='閉じる';
+  close.onclick=closePreviewPanel;
+  foot.appendChild(close);
+  document.getElementById('pvOverlay').classList.add('show');
+  close.focus();
+}
 function rsRestoreBoardDraftsNotify(){
   const r=rsRestoreBoardDrafts();
-  if(r.skipped.length) showToast(`保存した下書きのうち ${r.skipped.length}人日は戻しませんでした（`+r.skipped.slice(0,3).map(x=>(x.s?x.s.name+' '+af2DateLabel(x.d):x.d)+'：'+x.why).join(' / ')+(r.skipped.length>3?' ほか':'')+'）。公開中の内容を表示しています','error',0);
+  if(r.skipped.length) showToast(`下書き ${r.skipped.length}人日は公開中の内容と異なるため戻していません。`,'error',8000,()=>rsBoardDraftConflictDetails(r.skipped));
   else if(r.restored) showToast(`保存した下書き ${r.restored}人日を読み込みました（下書き・手で固定（📌）・休憩）`,'success',5000);
   return r;
 }
